@@ -264,7 +264,7 @@ TestResults TestList_LineFit(const std::vector<size_t>& values, size_t searchVal
     return ret;
 }
 
-TestResults TestList_HybridSearch(const std::vector<size_t>& values, size_t searchValue)
+TestResults TestList_LineFitHybridSearch(const std::vector<size_t>& values, size_t searchValue)
 {
     // On even iterations, this does a line fit step.
     // On odd iterations, this does a binary search step.
@@ -366,48 +366,48 @@ TestResults TestList_BinarySearch(const std::vector<size_t>& values, size_t sear
     ret.found = false;
     ret.guesses = 0;
 
-    size_t minIndex = 0;
-    size_t maxIndex = values.size()-1;
-    while (1)
+size_t minIndex = 0;
+size_t maxIndex = values.size() - 1;
+while (1)
+{
+    // make a guess by looking in the middle of the unknown area
+    ret.guesses++;
+    size_t guessIndex = (minIndex + maxIndex) / 2;
+    size_t guess = values[guessIndex];
+
+    // found it
+    if (guess == searchValue)
     {
-        // make a guess by looking in the middle of the unknown area
-        ret.guesses++;
-        size_t guessIndex = (minIndex + maxIndex) / 2;
-        size_t guess = values[guessIndex];
-
-        // found it
-        if (guess == searchValue)
-        {
-            ret.found = true;
-            ret.index = guessIndex;
-            return ret;
-        }
-        // if our guess was too low, it's the new min
-        else if (guess < searchValue)
-        {
-            minIndex = guessIndex + 1;
-        }
-        // if our guess was too high, it's the new max
-        else if (guess > searchValue)
-        {
-            // underflow prevention
-            if (guessIndex == 0)
-            {
-                ret.index = guessIndex;
-                return ret;
-            }
-            maxIndex = guessIndex - 1;
-        }
-
-        // fail case
-        if (minIndex > maxIndex)
+        ret.found = true;
+        ret.index = guessIndex;
+        return ret;
+    }
+    // if our guess was too low, it's the new min
+    else if (guess < searchValue)
+    {
+        minIndex = guessIndex + 1;
+    }
+    // if our guess was too high, it's the new max
+    else if (guess > searchValue)
+    {
+        // underflow prevention
+        if (guessIndex == 0)
         {
             ret.index = guessIndex;
             return ret;
         }
+        maxIndex = guessIndex - 1;
     }
 
-    return ret;
+    // fail case
+    if (minIndex > maxIndex)
+    {
+        ret.index = guessIndex;
+        return ret;
+    }
+}
+
+return ret;
 }
 
 TestResults TestList_LineFitBlind(const std::vector<size_t>& values, size_t searchValue)
@@ -423,7 +423,7 @@ TestResults TestList_LineFitBlind(const std::vector<size_t>& values, size_t sear
 
 void VerifyResults(const std::vector<size_t>& values, size_t searchValue, const TestResults& result, const char* list, const char* test)
 {
-    #if VERIFY_RESULT()
+#if VERIFY_RESULT()
     // verify correctness of result by comparing to a linear search
     TestResults actualResult = TestList_LinearSearch(values, searchValue);
     if (result.found != actualResult.found)
@@ -451,11 +451,63 @@ void VerifyResults(const std::vector<size_t>& values, size_t searchValue, const 
             printf("VERIFICATION FAILURE!! Not a valid place to insert a new value! %s, %s\n", list, test);
     }
 
-    #endif
+#endif
+}
+
+float EvaluateQuadratic(const float coefficients[3], float x)
+{
+    return coefficients[0] * x * x + coefficients[1] * x + coefficients[2];
+}
+
+void QuadraticFitTest(const std::vector<size_t>& values)
+{
+    // This function calculates the terms for a quadratic function passing through the points
+    // passed in using Lagrange interpolation.
+    // x axis is index, y axis is values[index].
+    float A = 0.0f;
+    float B = 0.0f;
+    float C = 0.0f;
+
+    for (size_t i = 0; i < 3; ++i)
+    {
+        size_t index1 = (i == 0) ? 1 : 0;
+        size_t index2 = (i == 2) ? 1 : 2;
+
+        // "A" coefficient is 1, always
+        float termA = 1.0f;
+
+        // "B" coefficient is -index1 + -index2
+        float termB = -float(index1) + -float(index2);
+
+        // "C" coefficient is -index1 * -index2
+        float termC = -float(index1) * -float(index2);
+
+        // denominator is (i - index1) * (i - index2)
+        float denominator = (float(i) - float(index1)) * (float(i) - float(index2));
+
+        // add these terms into the overall A,B,C terms of our quadratic function
+        // terms get multiplied by values[i] and divided by the denominator
+        A += termA * values[i] / denominator;
+        B += termB * values[i] / denominator;
+        C += termC * values[i] / denominator;
+    }
+
+    printf("Fit: %f * x^2 + %f * x + %f\n\n", A, B, C);
+    printf("A = %f\n", A);
+    printf("B = %f\n", B);
+    printf("C = %f\n\n", C);
+
+    float coefficients[3] = { A, B, C };
+
+    printf("f(0) = %f\n", EvaluateQuadratic(coefficients, 0));
+    printf("f(1) = %f\n", EvaluateQuadratic(coefficients, 1));
+    printf("f(2) = %f\n", EvaluateQuadratic(coefficients, 2));
 }
 
 int main(int argc, char** argv)
 {
+    QuadraticFitTest({1, 2, 10});
+    /*
     MakeListInfo MakeFns[] =
     {
         {"Random", MakeList_Random},
@@ -472,7 +524,7 @@ int main(int argc, char** argv)
         {"Line Fit", TestList_LineFit},
         {"Line Fit Blind", TestList_LineFitBlind},
         {"Binary Search", TestList_BinarySearch},
-        {"Hybrid", TestList_HybridSearch},
+        {"Life Fit Hybrid", TestList_LineFitHybridSearch},
     };
 
 #if MAKE_CSVS()
@@ -651,8 +703,28 @@ int main(int argc, char** argv)
             printf("%s total : %f seconds  (%zu guesses = %f nanoseconds per guess)\n\n", TestFns[testIndex].name, timeTotal, totalGuesses, timePerGuess);
         }
     }
+    */
 
     system("pause");
 
     return 0;
 }
+
+/*
+
+TODO:
+* this is the quadratic fit search, clean out linear stuff when ready.
+
+NOTES:
+? why wouldn't you just read the beginning and end of the list to get min/max?
+ * 2 less memory reads. They come in a single cache line with the count.
+ * also, what if you weren't searching an array, but were searching a function f(x)? (restricting to integer values, let's say). and that function was expensive. Say you are raymarching.
+  * if you KNOW the min / max due to the usage case, you can use that instead of trying to calculate it from the function each time. If it is costly, you are caching it off.
+? when would perf be obviously super compelling?
+ * when it's very slow to read from the list, or calculate the item! (like ray marching, or maybe you are trying to find a "minimum error" of a machine learning thing?)
+
+
+! the way i'm doing a quadratic monotonic function fit isn't the only way, and probably isn't the best way for minimizing error of the fit vs the actual data set.
+ ? monotonic least squares would be cool. I guess the general case you'd have to say if you want any anchor points?
+
+*/
