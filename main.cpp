@@ -459,14 +459,43 @@ float EvaluateQuadratic(const float coefficients[3], float x)
     return coefficients[0] * x * x + coefficients[1] * x + coefficients[2];
 }
 
+void MakeMonotonic(const std::vector<size_t>& values, float coefficients[3])
+{
+    // f(x)  = A*x^2 + B*x + C
+    // f'(x) = 2Ax + B
+    // f'(0) = B
+    // f'(max) = 2*A*max + B
+
+    // This function does 2 steps:
+    // 1) Makes sure the derivatives are positive
+    // 2) If it made a change, vertically adjusts the function to minimize least squared error (ie move c)
+
+    // One of the derivatives might be negative.
+    // if it starts negative - f'(0) is negative - then make B 0. Note this cannot make the end derivative negative!
+    // else if it ends negative - f'(max) is negative - then B is known to be positive, and so is max, so we should set A = -B/(2*max)
+
+    // if it starts negative
+    if (coefficients[1] < 0.0f)
+    {
+    }
+    // else if it ends negative
+    else if (true)
+    {
+
+    }
+    // else if it already is monotonic, we are done
+    else
+    {
+        return;
+    }
+}
+
 void QuadraticFitTest(const std::vector<size_t>& values)
 {
     // This function calculates the terms for a quadratic function passing through the points
     // passed in using Lagrange interpolation.
     // x axis is index, y axis is values[index].
-    float A = 0.0f;
-    float B = 0.0f;
-    float C = 0.0f;
+    float coefficients[3] = { 0.0f, 0.0f, 0.0f };
 
     for (size_t i = 0; i < 3; ++i)
     {
@@ -487,21 +516,23 @@ void QuadraticFitTest(const std::vector<size_t>& values)
 
         // add these terms into the overall A,B,C terms of our quadratic function
         // terms get multiplied by values[i] and divided by the denominator
-        A += termA * values[i] / denominator;
-        B += termB * values[i] / denominator;
-        C += termC * values[i] / denominator;
+        coefficients[0] += termA * values[i] / denominator;
+        coefficients[1] += termB * values[i] / denominator;
+        coefficients[2] += termC * values[i] / denominator;
     }
 
-    printf("Fit: %f * x^2 + %f * x + %f\n\n", A, B, C);
-    printf("A = %f\n", A);
-    printf("B = %f\n", B);
-    printf("C = %f\n\n", C);
-
-    float coefficients[3] = { A, B, C };
+    printf("Fit: %f * x^2 + %f * x + %f\n\n", coefficients[0], coefficients[1], coefficients[2]);
+    printf("A = %f\n", coefficients[0]);
+    printf("B = %f\n", coefficients[1]);
+    printf("C = %f\n\n", coefficients[2]);
 
     printf("f(0) = %f\n", EvaluateQuadratic(coefficients, 0));
     printf("f(1) = %f\n", EvaluateQuadratic(coefficients, 1));
     printf("f(2) = %f\n", EvaluateQuadratic(coefficients, 2));
+
+    MakeMonotonic(values, coefficients);
+
+    // TODO: print out values (including error?) for monotonic fit. should graph it too.
 }
 
 int main(int argc, char** argv)
@@ -714,6 +745,10 @@ int main(int argc, char** argv)
 
 TODO:
 * this is the quadratic fit search, clean out linear stuff when ready.
+* to get a quadratic least squares fit, maybe could do gradient descent for now, and say "if you could calculate this more optimally, it would get more compelling"?
+ * could maybe take a curve, make it monotonic, then move it up or down to minimize error (gradient descent C, or better if we can).
+* the real solution might have to be something like this: https://en.wikipedia.org/wiki/Quadratic_programming
+
 
 NOTES:
 ? why wouldn't you just read the beginning and end of the list to get min/max?
@@ -726,5 +761,7 @@ NOTES:
 
 ! the way i'm doing a quadratic monotonic function fit isn't the only way, and probably isn't the best way for minimizing error of the fit vs the actual data set.
  ? monotonic least squares would be cool. I guess the general case you'd have to say if you want any anchor points?
+
+ * proof of non monotocity on quadratic fit of monotonic points: https://www.wolframalpha.com/input/?i=quadratic+fit+(0,1),(1,2),(2,10)
 
 */
