@@ -749,6 +749,16 @@ TODO:
  * could maybe take a curve, make it monotonic, then move it up or down to minimize error (gradient descent C, or better if we can).
 * the real solution might have to be something like this: https://en.wikipedia.org/wiki/Quadratic_programming
 
+! monotonic quadratic fit idea: make the curve monotonic by moving middle point up or down. move the whole curve ("c") up or down by half that amount to center it.
+* Revised:
+ * if it starts out at a negative derivative, move p0 down until it's 0. whatever that amount moved down, move the entire curve up 2/3 of that amount, so each point is 1/3 that distance away from the fit curve.
+ * if it ends at a negative derivative, move p2 up until it's 0. Whatever that amount moved up, move the entire curve down 2/3 of that amount, so each point is 1/3 that distance away from the fit curve.
+! maybe also try some kind of gradient descent thing and see how your fits compare?
+
+* projective gradient descent...
+ * do gradient descent but each step, project the point back to a valid point - aka if derivatives need to be > 0, fix it so they are.
+ * likely need a population, i'd imagine, to avoid local minima
+
 
 NOTES:
 ? why wouldn't you just read the beginning and end of the list to get min/max?
