@@ -495,6 +495,12 @@ Vec3 CalculateErrorGradient(const Vec3u& values, const Vec3& coefficients)
 
 void MakeMonotonicSingleStep(const Vec3u& values, Vec3& coefficients)
 {
+
+    // TODO: try Wayne's thing of: 2Aa > -B and 2Ab > -B, where x in [a,b]
+    // 2Aa + B >= 0, 2Ab + B >= 0
+
+
+#if 1
     // f(x)  = A*x^2 + B*x + C
     // f'(x) = 2Ax + B
     // f'(0) = B
@@ -508,7 +514,6 @@ void MakeMonotonicSingleStep(const Vec3u& values, Vec3& coefficients)
     // if it starts negative - f'(0) is negative - then make B 0. Note this cannot make the end derivative negative!
     // else if it ends negative - f'(max) is negative - then B is known to be positive, and so is max, so we should set A = -B/(2*max)
 
-    // TODO: pass an array[3] in, instead of the values as a vector
 
     // TODO: no, we don't move the points here, but that isn't a bad idea! just not something i pursued.
     // TODO: motivation here: the points are monotonic, so the curve should be mostly monotonic. Nudge it that way, and hope the error doesn't increase too much.
@@ -531,6 +536,7 @@ void MakeMonotonicSingleStep(const Vec3u& values, Vec3& coefficients)
     {
         return;
     }
+#endif
 }
 
 void MakeMonotonicGradientDescent(const Vec3u& values, Vec3& coefficients)
@@ -545,8 +551,6 @@ void MakeMonotonicGradientDescent(const Vec3u& values, Vec3& coefficients)
     // dSquaredError/dA = 
     //
     // Trying to minimize squared error.
-
-    // TODO: try Wayne's thing of: 2Aa > -B and 2Ab > -B, where x in [a,b]
 
 
     static const int c_numIterations = 100;
@@ -575,7 +579,7 @@ void MakeMonotonicGradientDescent(const Vec3u& values, Vec3& coefficients)
 
 void QuadraticFitTest(const Vec3u &values)
 {
-    // TODO: the fit shouldn't rely on indices being 0,1,2. it should be whatever 0,N
+    // TODO: the fit shouldn't rely on indices being 0,1,2. it should be whatever in [M,N]
 
     // This function calculates the terms for a quadratic function passing through the points
     // passed in using Lagrange interpolation.
@@ -859,6 +863,9 @@ TODO:
  * do gradient descent but each step, project the point back to a valid point - aka if derivatives need to be > 0, fix it so they are.
  * likely need a population, i'd imagine, to avoid local minima
 
+ * need to test against a normal distribution.
+  * include gradient descent version?
+  * https://github.com/Atrix256/LinearFitSearch/pull/1
 
 NOTES:
 ? why wouldn't you just read the beginning and end of the list to get min/max?
