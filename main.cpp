@@ -464,18 +464,18 @@ float EvaluateQuadratic(const Vec3& coefficients, float x)
     return coefficients[0] * x * x + coefficients[1] * x + coefficients[2];
 }
 
-float CalculateMeanSquaredError(const Vec3u& values, const Vec3& coefficients)
+float CalculateMeanSquaredError(const Vec2u data[3], const Vec3& coefficients)
 {
     float mse = 0.0f;
     for (int i = 0; i < 3; ++i)
     {
-        float error = EvaluateQuadratic(coefficients, float(i)) - float(values[i]);
+        float error = EvaluateQuadratic(coefficients, float(data[i][0])) - float(data[i][1]);
         mse = Lerp(mse, error*error, 1.0f / float(i + 1));
     }
     return mse;
 }
 
-Vec3 CalculateErrorGradient(const Vec3u& values, const Vec3& coefficients)
+Vec3 CalculateErrorGradient(const Vec2u data[3], const Vec3& coefficients)
 {
     // TODO: can we get gradient better than doing it numerically with central differences?
     // Calculate error gradient using central differences
@@ -488,12 +488,12 @@ Vec3 CalculateErrorGradient(const Vec3u& values, const Vec3& coefficients)
         Vec3 c2 = coefficients;
         c1[i] -= c_epsilon;
         c2[i] += c_epsilon;
-        errorGradient[i] = (CalculateMeanSquaredError(values, c2) - CalculateMeanSquaredError(values, c1)) / (c_epsilon * 2.0f);
+        errorGradient[i] = (CalculateMeanSquaredError(data, c2) - CalculateMeanSquaredError(data, c1)) / (c_epsilon * 2.0f);
     }
     return errorGradient;
 }
 
-void MakeMonotonicSingleStep(const Vec3u& values, Vec3& coefficients)
+void MakeMonotonicSingleStep(const Vec2u data[3], Vec3& coefficients)
 {
 
     // TODO: try Wayne's thing of: 2Aa > -B and 2Ab > -B, where x in [a,b]
@@ -524,11 +524,11 @@ void MakeMonotonicSingleStep(const Vec3u& values, Vec3& coefficients)
         coefficients[1] = 0.0f;
     }
     // else if it ends negative
-    else if (2.0f * coefficients[0] * values[2] + coefficients[1] < 0.0)
+    else if (2.0f * coefficients[0] * data[2][0] + coefficients[1] < 0.0)
     {
-        coefficients[0] = -coefficients[1] / (2.0f * values[2]);
+        coefficients[0] = -coefficients[1] / (2.0f * data[2][0]);
 
-        float test = 2.0f * coefficients[0] * values[2] + coefficients[1] < 0.0;
+        float test = 2.0f * coefficients[0] * data[2][0] + coefficients[1];
         int ijkl = 0;
     }
     // else if it already is monotonic, we are done
@@ -539,7 +539,7 @@ void MakeMonotonicSingleStep(const Vec3u& values, Vec3& coefficients)
 #endif
 }
 
-void MakeMonotonicGradientDescent(const Vec3u& values, Vec3& coefficients)
+void MakeMonotonicGradientDescent(const Vec2u data[3], Vec3& coefficients)
 {
     // data points p0, p1, p2 fit by curve f.  g is a monotonic curve trying to fit p0, p1, p2
     //
@@ -556,58 +556,57 @@ void MakeMonotonicGradientDescent(const Vec3u& values, Vec3& coefficients)
     static const int c_numIterations = 100;
     static const float c_stepSize = 0.1f;
 
-    MakeMonotonicSingleStep(values, coefficients);
+    MakeMonotonicSingleStep(data, coefficients);
 
-
-    printf("Starting Error = %f\n", CalculateMeanSquaredError(values, coefficients));
+    printf("Starting Error = %f\n", CalculateMeanSquaredError(data, coefficients));
 
     for (int i = 0; i < c_numIterations; ++i)
     {
-        Vec3 errorGradient = CalculateErrorGradient(values, coefficients);
+        Vec3 errorGradient = CalculateErrorGradient(data, coefficients);
         coefficients[0] -= errorGradient[0] * c_stepSize;
         coefficients[1] -= errorGradient[1] * c_stepSize;
         coefficients[2] -= errorGradient[2] * c_stepSize;
-        MakeMonotonicSingleStep(values, coefficients);
+        MakeMonotonicSingleStep(data, coefficients);
 
         float gradientLength = sqrtf(errorGradient[0] * errorGradient[0] + errorGradient[1] * errorGradient[1] + errorGradient[2] * errorGradient[2]);
 
-        //printf("[%i] Error = %f (grad length = %f)\n", i, CalculateMeanSquaredError(values, coefficients), gradientLength);
+        printf("[%i] Error = %f (grad length = %f)\n", i, CalculateMeanSquaredError(data, coefficients), gradientLength);
     }
 
-    printf("Ending Error = %f\n", CalculateMeanSquaredError(values, coefficients));
+    printf("Ending Error = %f\n", CalculateMeanSquaredError(data, coefficients));
 }
 
-void QuadraticFitTest(const Vec3u &values)
+void QuadraticFitTest(const Vec2u data[3])
 {
     // TODO: the fit shouldn't rely on indices being 0,1,2. it should be whatever in [M,N]
 
     // This function calculates the terms for a quadratic function passing through the points
     // passed in using Lagrange interpolation.
-    // x axis is index, y axis is values[index].
     Vec3 coefficients = { 0.0f, 0.0f, 0.0f };
 
-    for (size_t i = 0; i < 3; ++i)
+    for (size_t index = 0; index < 3; ++index)
     {
-        size_t index1 = (i == 0) ? 1 : 0;
-        size_t index2 = (i == 2) ? 1 : 2;
+        size_t index0 = index;
+        size_t index1 = (index == 0) ? 1 : 0;
+        size_t index2 = (index == 2) ? 1 : 2;
 
         // "A" coefficient is 1, always
         float termA = 1.0f;
 
         // "B" coefficient is -index1 + -index2
-        float termB = -float(index1) + -float(index2);
+        float termB = -float(data[index1][0]) + -float(data[index2][0]);
 
         // "C" coefficient is -index1 * -index2
-        float termC = -float(index1) * -float(index2);
+        float termC = -float(data[index1][0]) * -float(data[index2][0]);
 
         // denominator is (i - index1) * (i - index2)
-        float denominator = (float(i) - float(index1)) * (float(i) - float(index2));
+        float denominator = (float(data[index0][0]) - float(data[index1][0])) * (float(data[index0][0]) - float(data[index2][0]));
 
         // add these terms into the overall A,B,C terms of our quadratic function
         // terms get multiplied by values[i] and divided by the denominator
-        coefficients[0] += termA * values[i] / denominator;
-        coefficients[1] += termB * values[i] / denominator;
-        coefficients[2] += termC * values[i] / denominator;
+        coefficients[0] += termA * data[index0][1] / denominator;
+        coefficients[1] += termB * data[index0][1] / denominator;
+        coefficients[2] += termC * data[index0][1] / denominator;
     }
 
     printf("Fit: %f * x^2 + %f * x + %f\n\n", coefficients[0], coefficients[1], coefficients[2]);
@@ -615,20 +614,22 @@ void QuadraticFitTest(const Vec3u &values)
     printf("B = %f\n", coefficients[1]);
     printf("C = %f\n\n", coefficients[2]);
 
-    printf("f(0) = %f\n", EvaluateQuadratic(coefficients, 0));
-    printf("f(1) = %f\n", EvaluateQuadratic(coefficients, 1));
-    printf("f(2) = %f\n", EvaluateQuadratic(coefficients, 2));
+    printf("f(%zu) = %f\n", data[0][0], EvaluateQuadratic(coefficients, float(data[0][0])));
+    printf("f(%zu) = %f\n", data[1][0], EvaluateQuadratic(coefficients, float(data[1][0])));
+    printf("f(%zu) = %f\n", data[2][0], EvaluateQuadratic(coefficients, float(data[2][0])));
 
-    MakeMonotonicGradientDescent(values, coefficients);
+    printf("Error of exact fit = %f\n", CalculateMeanSquaredError(data, coefficients));
+
+    MakeMonotonicGradientDescent(data, coefficients);
 
     printf("Fit: %f * x^2 + %f * x + %f\n\n", coefficients[0], coefficients[1], coefficients[2]);
     printf("A = %f\n", coefficients[0]);
     printf("B = %f\n", coefficients[1]);
     printf("C = %f\n\n", coefficients[2]);
 
-    printf("f(0) = %f\n", EvaluateQuadratic(coefficients, 0));
-    printf("f(1) = %f\n", EvaluateQuadratic(coefficients, 1));
-    printf("f(2) = %f\n", EvaluateQuadratic(coefficients, 2));
+    printf("f(%zu) = %f\n", data[0][0], EvaluateQuadratic(coefficients, float(data[0][0])));
+    printf("f(%zu) = %f\n", data[1][0], EvaluateQuadratic(coefficients, float(data[1][0])));
+    printf("f(%zu) = %f\n", data[2][0], EvaluateQuadratic(coefficients, float(data[2][0])));
 
     int ijkl = 0;
 
@@ -637,9 +638,12 @@ void QuadraticFitTest(const Vec3u &values)
 
 int main(int argc, char** argv)
 {
-    Vec3u values = { 1, 2, 10 };
+    // TODO: with the last value being 3, a gradient descent step size of 0.1 is too large and it's unstable (why?!)
+    // TODO: it might be the gradient step thing. Really, the gradient from the first step should be zero since it's a perfect fit.
+    // TODO: it's probably from using finite differences instead of an analytical derivatives. fix that maybe?
+    Vec2u data[3] = { {0,1}, {1,2}, {3, 10} };
 
-    QuadraticFitTest(values);
+    QuadraticFitTest(data);
     /*
     MakeListInfo MakeFns[] =
     {
