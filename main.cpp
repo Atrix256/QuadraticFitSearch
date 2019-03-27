@@ -479,41 +479,28 @@ Vec3 CalculateErrorSquaredGradient(const Vec2u data[3], const Vec3& coefficients
 {
     Vec3 errorGradient = { 0.0f, 0.0f, 0.0f };
 
-#if 1
+#if 1  // Calculate error squared gradient analytically
 
-    // how much the error squared for a single point changes as A changes
-    auto dErrorSquared_dA_SinglePoint = [] (const Vec3& coefficients, const Vec2u& point) -> float
-    {
-        float A = coefficients[0];
-        float B = coefficients[1];
-        float C = coefficients[2];
-
-        float x = float(point[0]);
-        float y = float(point[1]);
-
-        // 2Ax^4 + 2Bx^3 + 2Cx^2 - 2x^2y
-        return 2.0f*A*x*x*x*x +
-               2.0f*B*x*x*x +
-               2.0f*C*x*x -
-               2.0f*x*x*y;
-    };
-
-    // how much the error squared for a single point changes as B changes
-    auto dErrorSquared_dB_SinglePoint = [](const Vec3& coefficients, const Vec2u& point) -> float
-    {
-        float A = coefficients[0];
-        float B = coefficients[1];
-        float C = coefficients[2];
-
-        float x = float(point[0]);
-        float y = float(point[1]);
-
-        // 2Ax^3 + 2Bx^2 + 2Cx - 2xy
-        return 2.0f*A*x*x*x +
-               2.0f*B*x*x +
-               2.0f*C*x -
-               2.0f*x*y;
-    };
+    // Function = Ax^2+Bx+C
+    //
+    // Error = Ax^2+Bx+C-y
+    //
+    // Error^2 = (Ax^2+Bx+C-y)^2
+    //
+    // A,B,C are the coefficients.
+    // x is the data point's x axis value
+    // y is the data point's y axis value
+    //
+    // We are calculating / minimizing "Error Squared" so that we treat negative
+    // and positive error the same, and try to reach zero error.
+    //
+    // dError^2 / dC = 2Ax^2 + 2Bx   + 2C    - 2y
+    // dError^2 / dB = 2Ax^3 + 2Bx^2 + 2Cx   - 2xy
+    // dError^2 / dA = 2Ax^4 + 2Bx^3 + 2Cx^2 - 2x^2y
+    //
+    // Observation: start with dEerror^2 / dC
+    //              multiply by x to get dEerror^2 / dB
+    //              multiply by x to get dEerror^2 / dA
 
     // how much the error squared for a single point changes as C changes
     auto dErrorSquared_dC_SinglePoint = [](const Vec3& coefficients, const Vec2u& point) -> float
@@ -532,24 +519,21 @@ Vec3 CalculateErrorSquaredGradient(const Vec2u data[3], const Vec3& coefficients
                2.0f*y;
     };
 
-    // TODO: can we just calculate dE/dC and multiply by x to get dE/dB and multiply by x again to get dE/dA??
-    // That would be a lot cheaper & simpler i think... it's weird but seemingly true...  try it after getting it working
-
+    // calculate the combined error squared gradient for all three points
     for (int i = 0; i < 3; ++i)
     {
-        errorGradient[0] += dErrorSquared_dA_SinglePoint(coefficients, data[i]);
-        errorGradient[1] += dErrorSquared_dB_SinglePoint(coefficients, data[i]);
-        errorGradient[2] += dErrorSquared_dC_SinglePoint(coefficients, data[i]);
+        float dErrorSquared_dC = dErrorSquared_dC_SinglePoint(coefficients, data[i]);
+        float x = float(data[i][0]);
+
+        errorGradient[2] += dErrorSquared_dC;
+        errorGradient[1] += dErrorSquared_dC * x;
+        errorGradient[0] += dErrorSquared_dC * x * x;
     }
     errorGradient[0] /= 3.0f;
     errorGradient[1] /= 3.0f;
     errorGradient[2] /= 3.0f;
 
-    int ijkl = 0;
-
-#else
-    // TODO: can we get gradient better than doing it numerically with central differences?
-    // Calculate error gradient using central differences
+#else  // Calculate error squared gradient numerically using central differences.
     static const float c_epsilon = 0.001f;
     for (int i = 0; i < 3; ++i)
     {
@@ -708,6 +692,8 @@ void QuadraticFitTest(const Vec2u data[3])
 
 int main(int argc, char** argv)
 {
+    // TODO: next, update MakeMonotonicSingleStep() to try Wayne's thing
+
     // TODO: with the last value being 3, a gradient descent step size of 0.1 is too large and it's unstable (why?!)
     // TODO: it might be the gradient step thing. Really, the gradient from the first step should be zero since it's a perfect fit.
     // TODO: it's probably from using finite differences instead of an analytical derivatives. fix that maybe?
