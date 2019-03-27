@@ -475,13 +475,82 @@ float CalculateMeanSquaredError(const Vec2u data[3], const Vec3& coefficients)
     return mse;
 }
 
-Vec3 CalculateErrorGradient(const Vec2u data[3], const Vec3& coefficients)
+Vec3 CalculateErrorSquaredGradient(const Vec2u data[3], const Vec3& coefficients)
 {
+    Vec3 errorGradient = { 0.0f, 0.0f, 0.0f };
+
+#if 1
+
+    // how much the error squared for a single point changes as A changes
+    auto dErrorSquared_dA_SinglePoint = [] (const Vec3& coefficients, const Vec2u& point) -> float
+    {
+        float A = coefficients[0];
+        float B = coefficients[1];
+        float C = coefficients[2];
+
+        float x = float(point[0]);
+        float y = float(point[1]);
+
+        // 2Ax^4 + 2Bx^3 + 2Cx^2 - 2x^2y
+        return 2.0f*A*x*x*x*x +
+               2.0f*B*x*x*x +
+               2.0f*C*x*x -
+               2.0f*x*x*y;
+    };
+
+    // how much the error squared for a single point changes as B changes
+    auto dErrorSquared_dB_SinglePoint = [](const Vec3& coefficients, const Vec2u& point) -> float
+    {
+        float A = coefficients[0];
+        float B = coefficients[1];
+        float C = coefficients[2];
+
+        float x = float(point[0]);
+        float y = float(point[1]);
+
+        // 2Ax^3 + 2Bx^2 + 2Cx - 2xy
+        return 2.0f*A*x*x*x +
+               2.0f*B*x*x +
+               2.0f*C*x -
+               2.0f*x*y;
+    };
+
+    // how much the error squared for a single point changes as C changes
+    auto dErrorSquared_dC_SinglePoint = [](const Vec3& coefficients, const Vec2u& point) -> float
+    {
+        float A = coefficients[0];
+        float B = coefficients[1];
+        float C = coefficients[2];
+
+        float x = float(point[0]);
+        float y = float(point[1]);
+
+        // 2Ax^2 + 2Bx + 2C - 2y
+        return 2.0f*A*x*x +
+               2.0f*B*x +
+               2.0f*C -
+               2.0f*y;
+    };
+
+    // TODO: can we just calculate dE/dC and multiply by x to get dE/dB and multiply by x again to get dE/dA??
+    // That would be a lot cheaper & simpler i think... it's weird but seemingly true...  try it after getting it working
+
+    for (int i = 0; i < 3; ++i)
+    {
+        errorGradient[0] += dErrorSquared_dA_SinglePoint(coefficients, data[i]);
+        errorGradient[1] += dErrorSquared_dB_SinglePoint(coefficients, data[i]);
+        errorGradient[2] += dErrorSquared_dC_SinglePoint(coefficients, data[i]);
+    }
+    errorGradient[0] /= 3.0f;
+    errorGradient[1] /= 3.0f;
+    errorGradient[2] /= 3.0f;
+
+    int ijkl = 0;
+
+#else
     // TODO: can we get gradient better than doing it numerically with central differences?
     // Calculate error gradient using central differences
     static const float c_epsilon = 0.001f;
-
-    Vec3 errorGradient;
     for (int i = 0; i < 3; ++i)
     {
         Vec3 c1 = coefficients;
@@ -490,6 +559,7 @@ Vec3 CalculateErrorGradient(const Vec2u data[3], const Vec3& coefficients)
         c2[i] += c_epsilon;
         errorGradient[i] = (CalculateMeanSquaredError(data, c2) - CalculateMeanSquaredError(data, c1)) / (c_epsilon * 2.0f);
     }
+#endif
     return errorGradient;
 }
 
@@ -562,7 +632,7 @@ void MakeMonotonicGradientDescent(const Vec2u data[3], Vec3& coefficients)
 
     for (int i = 0; i < c_numIterations; ++i)
     {
-        Vec3 errorGradient = CalculateErrorGradient(data, coefficients);
+        Vec3 errorGradient = CalculateErrorSquaredGradient(data, coefficients);
         coefficients[0] -= errorGradient[0] * c_stepSize;
         coefficients[1] -= errorGradient[1] * c_stepSize;
         coefficients[2] -= errorGradient[2] * c_stepSize;
@@ -641,7 +711,7 @@ int main(int argc, char** argv)
     // TODO: with the last value being 3, a gradient descent step size of 0.1 is too large and it's unstable (why?!)
     // TODO: it might be the gradient step thing. Really, the gradient from the first step should be zero since it's a perfect fit.
     // TODO: it's probably from using finite differences instead of an analytical derivatives. fix that maybe?
-    Vec2u data[3] = { {0,1}, {1,2}, {3, 10} };
+    Vec2u data[3] = { {0,1}, {1,2}, {2, 10} };
 
     QuadraticFitTest(data);
     /*
