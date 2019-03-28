@@ -602,9 +602,9 @@ TestResults TestList_QuadraticFit(const std::vector<size_t>& values, size_t sear
     // probably should literally store it off and re-use it in fact.
 
     // get the starting min and max value.
-    size_t minIndex = 0;
-    size_t maxIndex = values.size() - 1;
-    size_t midIndex = (minIndex + maxIndex) / 2;
+    int minIndex = 0;
+    int maxIndex = int(values.size() - 1);
+    int midIndex = (minIndex + maxIndex) / 2;
     size_t min = values[minIndex];
     size_t max = values[maxIndex];
     size_t mid = values[midIndex];
@@ -645,34 +645,113 @@ TestResults TestList_QuadraticFit(const std::vector<size_t>& values, size_t sear
         return ret;
     }
 
-    Vec2u data[3]=
-    {
-        {minIndex, min},
-        {midIndex, mid},
-        {maxIndex, max}
-    };
 
     Vec3 coefficiants;
-    QuadraticFit(data, coefficiants);
-
-    // TODO: how to invert a quadratic?
-    // TODO: code the algorithm!
-
-    int ijkl = 0;
-
-    // TODO: after we pre-calculate the quadratic fit, if we have some other point to include in the fit
-    // tests directly above we should do so.  We probably will just have some coefficients to make the
-    // initial guess though.
-
-    // fit a line to the end points
-    // y = mx + b
-    // m = rise / run
-    // b = y - mx
-    //float m = (float(max) - float(min)) / float(maxIndex - minIndex);
-    //float b = float(min) - m * float(minIndex);
-
-    //while (1)
     {
+        Vec2u data[3] =
+        {
+            {size_t(minIndex), min},
+            {size_t(midIndex), mid},
+            {size_t(maxIndex), max}
+        };
+        QuadraticFit(data, coefficiants);
+        MakeQuadraticMonotonic_ProjectiveGradientDescent(data, coefficiants);
+    }
+
+    while (1)
+    {
+        // TODO: what does the discriminant and guesses look like for non monotonic case? I'm betting the guesses are ambiguous.
+
+        // make a guess, by using the quadratic equation to plug in y and get an x
+        ret.guesses++;
+
+        // calculate discriminant: B^2-4AC.
+        // Note: C = (C - y)
+        float discriminant = coefficiants[1] * coefficiants[1] - 4.0f * coefficiants[0] * (coefficiants[2] - float(searchValue));
+
+        // (-b +/- sqrt(discriminant)) / 2A
+        float guess1f = (-coefficiants[1] + sqrtf(discriminant)) / (2.0f * coefficiants[0]);
+        float guess2f = (-coefficiants[1] - sqrtf(discriminant)) / (2.0f * coefficiants[0]);
+
+        int guess1 = size_t(guess1f);
+        int guess2 = size_t(guess2f);
+
+        int guessIndex = (guess1 >= minIndex && guess1 <= maxIndex) ? guess1 : guess2;
+
+        if (guessIndex < minIndex || guessIndex > maxIndex)
+            printf("No Guess Valid?!");
+
+        guessIndex = Clamp(minIndex + 1, maxIndex - 1, guessIndex);
+        size_t guess = values[guessIndex];
+
+        // TODO: update "mid" point too. call it third? if old min/max is less out of bounds than current mid point, use it, else keep the current mid point
+
+        // if we found it, return success
+        if (guess == searchValue)
+        {
+            ret.index = guessIndex;
+            return ret;
+        }
+
+        // if we were too low, this is our new minimum
+        if (guess < searchValue)
+        {
+            int oldMinIndex = minIndex;
+            minIndex = guessIndex;
+            min = guess;
+
+            int midIndexDistance = 0;
+            if (midIndex < minIndex)
+                midIndexDistance = minIndex - midIndex;
+            else if (midIndex > maxIndex)
+                midIndexDistance = midIndex - maxIndex;
+
+            int oldMinIndexDistance = minIndex - oldMinIndex;
+
+            midIndex = oldMinIndexDistance < midIndexDistance ? minIndex : midIndex;
+        }
+        // else we were too high, this is our new maximum
+        else
+        {
+            int oldMaxIndex = maxIndex;
+            maxIndex = guessIndex;
+            max = guess;
+
+            int midIndexDistance = 0;
+            if (midIndex < minIndex)
+                midIndexDistance = minIndex - midIndex;
+            else if (midIndex > maxIndex)
+                midIndexDistance = midIndex - maxIndex;
+
+            int oldMaxIndexDistance = maxIndex - oldMaxIndex;
+
+            midIndex = oldMaxIndexDistance < midIndexDistance ? maxIndex : midIndex;
+        }
+
+        // TODO: i think we exit out when the remaining list size is <= 3?
+
+        // if we run out of places to look, we didn't find it
+        if (minIndex + 1 >= maxIndex)
+        {
+            ret.index = minIndex;
+            ret.found = false;
+            return ret;
+        }
+
+        // do another quadratic fit!
+        Vec2u data[3] =
+        {
+            {size_t(minIndex), min},
+            {size_t(midIndex), mid},
+            {size_t(maxIndex), max}
+        };
+        QuadraticFit(data, coefficiants);
+        MakeQuadraticMonotonic_ProjectiveGradientDescent(data, coefficiants);
+
+        // TODO: need to update "mid" value, not just mid index
+        // TODO: also, rename mid to "third" since it might not be in the middle
+
+        // TODO: need to thoroughly test this!
     }
 
     return ret;
@@ -809,12 +888,16 @@ int main(int argc, char** argv)
 
     MakeListInfo MakeFns[] =
     {
+        /*
         {"Random", MakeList_Random},
         {"Linear", MakeList_Linear},
         {"Linear Outlier", MakeList_Linear_Outlier},
+        */
         {"Quadratic", MakeList_Quadratic},
+        /*
         {"Cubic", MakeList_Cubic},
         {"Log", MakeList_Log},
+        */
     };
 
     TestListInfo TestFns[] =
@@ -1028,6 +1111,7 @@ TODO:
 * try your idea of moving point 0 down til non negative gradient, or point 2 up til same, then moving the entire curve to balance the error.
  * can compare results vs the better gradient descent found curve
 
+* yes, you can invert a non monotonic quadratic. use quadratic equation and do +/- test like you do here. i think the issue is you have to "randomly" choose one instead of getting to know which to use.
 
 * Include normal distribution.
  * Show how the last post things did with normal distribution.
