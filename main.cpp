@@ -365,100 +365,6 @@ TestResults TestList_LineFitHybridSearch(const std::vector<size_t>& values, size
     return ret;
 }
 
-TestResults TestList_BinarySearch(const std::vector<size_t>& values, size_t searchValue)
-{
-    TestResults ret;
-    ret.found = false;
-    ret.guesses = 0;
-
-size_t minIndex = 0;
-size_t maxIndex = values.size() - 1;
-while (1)
-{
-    // make a guess by looking in the middle of the unknown area
-    ret.guesses++;
-    size_t guessIndex = (minIndex + maxIndex) / 2;
-    size_t guess = values[guessIndex];
-
-    // found it
-    if (guess == searchValue)
-    {
-        ret.found = true;
-        ret.index = guessIndex;
-        return ret;
-    }
-    // if our guess was too low, it's the new min
-    else if (guess < searchValue)
-    {
-        minIndex = guessIndex + 1;
-    }
-    // if our guess was too high, it's the new max
-    else if (guess > searchValue)
-    {
-        // underflow prevention
-        if (guessIndex == 0)
-        {
-            ret.index = guessIndex;
-            return ret;
-        }
-        maxIndex = guessIndex - 1;
-    }
-
-    // fail case
-    if (minIndex > maxIndex)
-    {
-        ret.index = guessIndex;
-        return ret;
-    }
-}
-
-return ret;
-}
-
-TestResults TestList_LineFitBlind(const std::vector<size_t>& values, size_t searchValue)
-{
-    // If you want to know how this does against binary search without first knowing the min and max, this result is for you.
-    // It takes 2 extra samples to get the min and max, so we are counting those as guesses (memory reads).
-    TestResults ret = TestList_LineFit(values, searchValue);
-    ret.guesses += 2;
-    return ret;
-}
-
-// ------------------------ MAIN ------------------------
-
-void VerifyResults(const std::vector<size_t>& values, size_t searchValue, const TestResults& result, const char* list, const char* test)
-{
-#if VERIFY_RESULT()
-    // verify correctness of result by comparing to a linear search
-    TestResults actualResult = TestList_LinearSearch(values, searchValue);
-    if (result.found != actualResult.found)
-    {
-        printf("VERIFICATION FAILURE!! (found %s vs %s) %s, %s\n", result.found ? "true" : "false", actualResult.found ? "true" : "false", list, test);
-    }
-    else if (result.found == true && result.index != actualResult.index && values[result.index] != values[actualResult.index])
-    {
-        // Note that in the case of duplicates, different algorithms may return different indices, but the values stored in them should be the same
-        printf("VERIFICATION FAILURE!! (index %zu vs %zu) %s, %s\n", result.index, actualResult.index, list, test);
-    }
-    // verify that the index returned is a reasonable place for the value to be inserted, if the value was not found.
-    else if (result.found == false)
-    {
-        bool gte = true;
-        bool lte = true;
-
-        if (result.index > 0)
-            gte = searchValue >= values[result.index - 1];
-
-        if (result.index + 1 < values.size())
-            lte = searchValue <= values[result.index + 1];
-
-        if (gte == false || lte == false)
-            printf("VERIFICATION FAILURE!! Not a valid place to insert a new value! %s, %s\n", list, test);
-    }
-
-#endif
-}
-
 float EvaluateQuadratic(const Vec3& coefficients, float x)
 {
     return coefficients[0] * x * x + coefficients[1] * x + coefficients[2];
@@ -676,6 +582,197 @@ void QuadraticFit(const Vec2u data[3], Vec3& coefficients)
     }
 }
 
+TestResults TestList_QuadraticFit(const std::vector<size_t>& values, size_t searchValue)
+{
+    // The idea of this test is that we keep a fit of a quadratic y=Ax^2+Bx+C and use
+    // that info to make a guess as to where the value will be.
+    //
+    // When a guess is wrong, it becomes the new search min or max depending on if it was
+    // too low (left) or too high (right).  The "third point" in the quadratic fit is
+    // whichever point is closer to the min/max boundaries:  the old min or max that just
+    // got replaced, or the old "third point".  We want to keep the data fit as localized
+    // as we can for better results.
+    //
+    // This function returns how many steps it took to find the value
+    // but doesn't include the reads at the beginning because those and the monotonic
+    // quadratic fit should be done in advance and shared among all queries against it.
+
+    // TODO: maybe the initial quadratic fit should minimize the error of all data points.
+    // Since it's stored and re-used it shouldn't matter if it takes a bit to do that.  We
+    // probably should literally store it off and re-use it in fact.
+
+    // get the starting min and max value.
+    size_t minIndex = 0;
+    size_t maxIndex = values.size() - 1;
+    size_t midIndex = (minIndex + maxIndex) / 2;
+    size_t min = values[minIndex];
+    size_t max = values[maxIndex];
+    size_t mid = values[midIndex];
+
+    TestResults ret;
+    ret.found = true;
+    ret.guesses = 0;
+
+    // if we've already found the value, we are done
+    if (searchValue < min)
+    {
+        ret.index = minIndex;
+        ret.found = false;
+        return ret;
+    }
+    if (searchValue > max)
+    {
+        ret.index = maxIndex;
+        ret.found = false;
+        return ret;
+    }
+    if (searchValue == min)
+    {
+        ret.index = minIndex;
+        return ret;
+    }
+    if (searchValue == max)
+    {
+        ret.index = maxIndex;
+        return ret;
+    }
+
+    // we can't handle just 2 items in a list
+    if (values.size() == 2)
+    {
+        ret.index = 0;
+        ret.found = false;
+        return ret;
+    }
+
+    Vec2u data[3]=
+    {
+        {minIndex, min},
+        {midIndex, mid},
+        {maxIndex, max}
+    };
+
+    Vec3 coefficiants;
+    QuadraticFit(data, coefficiants);
+
+    // TODO: how to invert a quadratic?
+    // TODO: code the algorithm!
+
+    int ijkl = 0;
+
+    // TODO: after we pre-calculate the quadratic fit, if we have some other point to include in the fit
+    // tests directly above we should do so.  We probably will just have some coefficients to make the
+    // initial guess though.
+
+    // fit a line to the end points
+    // y = mx + b
+    // m = rise / run
+    // b = y - mx
+    //float m = (float(max) - float(min)) / float(maxIndex - minIndex);
+    //float b = float(min) - m * float(minIndex);
+
+    //while (1)
+    {
+    }
+
+    return ret;
+}
+
+TestResults TestList_BinarySearch(const std::vector<size_t>& values, size_t searchValue)
+{
+    TestResults ret;
+    ret.found = false;
+    ret.guesses = 0;
+
+size_t minIndex = 0;
+size_t maxIndex = values.size() - 1;
+while (1)
+{
+    // make a guess by looking in the middle of the unknown area
+    ret.guesses++;
+    size_t guessIndex = (minIndex + maxIndex) / 2;
+    size_t guess = values[guessIndex];
+
+    // found it
+    if (guess == searchValue)
+    {
+        ret.found = true;
+        ret.index = guessIndex;
+        return ret;
+    }
+    // if our guess was too low, it's the new min
+    else if (guess < searchValue)
+    {
+        minIndex = guessIndex + 1;
+    }
+    // if our guess was too high, it's the new max
+    else if (guess > searchValue)
+    {
+        // underflow prevention
+        if (guessIndex == 0)
+        {
+            ret.index = guessIndex;
+            return ret;
+        }
+        maxIndex = guessIndex - 1;
+    }
+
+    // fail case
+    if (minIndex > maxIndex)
+    {
+        ret.index = guessIndex;
+        return ret;
+    }
+}
+
+return ret;
+}
+
+TestResults TestList_LineFitBlind(const std::vector<size_t>& values, size_t searchValue)
+{
+    // If you want to know how this does against binary search without first knowing the min and max, this result is for you.
+    // It takes 2 extra samples to get the min and max, so we are counting those as guesses (memory reads).
+    TestResults ret = TestList_LineFit(values, searchValue);
+    ret.guesses += 2;
+    return ret;
+}
+
+// ------------------------ MAIN ------------------------
+
+void VerifyResults(const std::vector<size_t>& values, size_t searchValue, const TestResults& result, const char* list, const char* test)
+{
+#if VERIFY_RESULT()
+    // verify correctness of result by comparing to a linear search
+    TestResults actualResult = TestList_LinearSearch(values, searchValue);
+    if (result.found != actualResult.found)
+    {
+        printf("VERIFICATION FAILURE!! (found %s vs %s) %s, %s\n", result.found ? "true" : "false", actualResult.found ? "true" : "false", list, test);
+    }
+    else if (result.found == true && result.index != actualResult.index && values[result.index] != values[actualResult.index])
+    {
+        // Note that in the case of duplicates, different algorithms may return different indices, but the values stored in them should be the same
+        printf("VERIFICATION FAILURE!! (index %zu vs %zu) %s, %s\n", result.index, actualResult.index, list, test);
+    }
+    // verify that the index returned is a reasonable place for the value to be inserted, if the value was not found.
+    else if (result.found == false)
+    {
+        bool gte = true;
+        bool lte = true;
+
+        if (result.index > 0)
+            gte = searchValue >= values[result.index - 1];
+
+        if (result.index + 1 < values.size())
+            lte = searchValue <= values[result.index + 1];
+
+        if (gte == false || lte == false)
+            printf("VERIFICATION FAILURE!! Not a valid place to insert a new value! %s, %s\n", list, test);
+    }
+
+#endif
+}
+
+// TODO: delete?
 void QuadraticFitTest(const Vec2u data[3])
 {
     Vec3 coefficients = { 0.0f, 0.0f, 0.0f };
@@ -702,18 +799,14 @@ void QuadraticFitTest(const Vec2u data[3])
     printf("f(%zu) = %f\n", data[0][0], EvaluateQuadratic(coefficients, float(data[0][0])));
     printf("f(%zu) = %f\n", data[1][0], EvaluateQuadratic(coefficients, float(data[1][0])));
     printf("f(%zu) = %f\n", data[2][0], EvaluateQuadratic(coefficients, float(data[2][0])));
-
-    int ijkl = 0;
-
-    // TODO: print out values (including error?) for monotonic fit. should graph it too.
 }
 
 int main(int argc, char** argv)
 {
+    // TODO: delete when you feel like it.
     Vec2u data[3] = { {0,1}, {1,2}, {2, 10} };
-
     QuadraticFitTest(data);
-    /*
+
     MakeListInfo MakeFns[] =
     {
         {"Random", MakeList_Random},
@@ -726,11 +819,16 @@ int main(int argc, char** argv)
 
     TestListInfo TestFns[] =
     {
+        /*
         {"Linear Search", TestList_LinearSearch},
         {"Line Fit", TestList_LineFit},
         {"Line Fit Blind", TestList_LineFitBlind},
         {"Binary Search", TestList_BinarySearch},
         {"Life Fit Hybrid", TestList_LineFitHybridSearch},
+        */
+        {"Quadratic Fit", TestList_QuadraticFit},
+
+        // Quadratic Hybrid Fit!
     };
 
 #if MAKE_CSVS()
@@ -909,7 +1007,6 @@ int main(int argc, char** argv)
             printf("%s total : %f seconds  (%zu guesses = %f nanoseconds per guess)\n\n", TestFns[testIndex].name, timeTotal, totalGuesses, timePerGuess);
         }
     }
-    */
 
     system("pause");
 
@@ -931,6 +1028,11 @@ TODO:
 * try your idea of moving point 0 down til non negative gradient, or point 2 up til same, then moving the entire curve to balance the error.
  * can compare results vs the better gradient descent found curve
 
+
+* Include normal distribution.
+ * Show how the last post things did with normal distribution.
+
+? should you do gradient search? If so, need to compare it to hybrid etc.
 
 ! monotonic quadratic fit idea: make the curve monotonic by moving middle point up or down. move the whole curve ("c") up or down by half that amount to center it.
 * Revised:
@@ -962,5 +1064,7 @@ NOTES:
  * i wish i knew these things. Maybe later & i can explain them with blog posts of their own :P
 
 * thank wayne (and others?) for the math help?
+
+* mention the usage cases: raymarching, querying some external service, being on disk, etc
 
 */
