@@ -547,8 +547,10 @@ Vec3 CalculateErrorSquaredGradient(const Vec2u data[3], const Vec3& coefficients
     return errorGradient;
 }
 
-void MakeMonotonicSingleStep(const Vec2u data[3], Vec3& coefficients)
+void MakeQuadraticMonotonic_ProjectiveGradientDescent_ProjectValid(const Vec2u data[3], Vec3& coefficients)
 {
+    // This function makes sure that the derivatives of the quadratic curve is non negative over the range the data is defined in
+    //
     // f(x) = Ax^2 + Bx + C
     // f'(x) = 2Ax+B
     //
@@ -612,24 +614,18 @@ void MakeMonotonicSingleStep(const Vec2u data[3], Vec3& coefficients)
     }
 }
 
-void MakeMonotonicGradientDescent(const Vec2u data[3], Vec3& coefficients)
+void MakeQuadraticMonotonic_ProjectiveGradientDescent(const Vec2u data[3], Vec3& coefficients)
 {
-    // data points p0, p1, p2 fit by curve f.  g is a monotonic curve trying to fit p0, p1, p2
+    // This function searches for the best fit of a quadratic function to the data set, where
+    // the curve is monotonic over the range that the data is defined in.
     //
-    // f(x) = Ax^2+Bx+C
-    // g(x) = Dx^2+Ex+F
-    //
-    // SquaredError = (g(p0.x)-p0.y)^2 + (g(p1.x)-p1.y)^2 + (g(p2.x)-p2.y)^2
-    //
-    // dSquaredError/dA = 
-    //
-    // Trying to minimize squared error.
-
+    // It uses projective gradient descent to find this, which means it makes the data valid
+    // after each gradient descent step (projects it back into valid space).
 
     static const int c_numIterations = 100;
     static const float c_stepSize = 0.1f;
 
-    MakeMonotonicSingleStep(data, coefficients);
+    MakeQuadraticMonotonic_ProjectiveGradientDescent_ProjectValid(data, coefficients);
 
     printf("Starting Error = %f\n", CalculateMeanSquaredError(data, coefficients));
 
@@ -639,23 +635,20 @@ void MakeMonotonicGradientDescent(const Vec2u data[3], Vec3& coefficients)
         coefficients[0] -= errorGradient[0] * c_stepSize;
         coefficients[1] -= errorGradient[1] * c_stepSize;
         coefficients[2] -= errorGradient[2] * c_stepSize;
-        MakeMonotonicSingleStep(data, coefficients);
+        MakeQuadraticMonotonic_ProjectiveGradientDescent_ProjectValid(data, coefficients);
 
-        float gradientLength = sqrtf(errorGradient[0] * errorGradient[0] + errorGradient[1] * errorGradient[1] + errorGradient[2] * errorGradient[2]);
-
-        printf("[%i] Error = %f (grad length = %f)\n", i, CalculateMeanSquaredError(data, coefficients), gradientLength);
+        //float gradientLength = sqrtf(errorGradient[0] * errorGradient[0] + errorGradient[1] * errorGradient[1] + errorGradient[2] * errorGradient[2]);
+        //printf("[%i] Error = %f (grad length = %f)\n", i, CalculateMeanSquaredError(data, coefficients), gradientLength);
     }
 
     printf("Ending Error = %f\n", CalculateMeanSquaredError(data, coefficients));
 }
 
-void QuadraticFitTest(const Vec2u data[3])
+void QuadraticFit(const Vec2u data[3], Vec3& coefficients)
 {
-    // TODO: the fit shouldn't rely on indices being 0,1,2. it should be whatever in [M,N]
-
     // This function calculates the terms for a quadratic function passing through the points
-    // passed in using Lagrange interpolation.
-    Vec3 coefficients = { 0.0f, 0.0f, 0.0f };
+    // passed in. Derived from Lagrange interpolation.
+    coefficients = { 0.0f, 0.0f, 0.0f };
 
     for (size_t index = 0; index < 3; ++index)
     {
@@ -681,6 +674,12 @@ void QuadraticFitTest(const Vec2u data[3])
         coefficients[1] += termB * data[index0][1] / denominator;
         coefficients[2] += termC * data[index0][1] / denominator;
     }
+}
+
+void QuadraticFitTest(const Vec2u data[3])
+{
+    Vec3 coefficients = { 0.0f, 0.0f, 0.0f };
+    QuadraticFit(data, coefficients);
 
     printf("Fit: %f * x^2 + %f * x + %f\n\n", coefficients[0], coefficients[1], coefficients[2]);
     printf("A = %f\n", coefficients[0]);
@@ -693,7 +692,7 @@ void QuadraticFitTest(const Vec2u data[3])
 
     printf("Error of exact fit = %f\n", CalculateMeanSquaredError(data, coefficients));
 
-    MakeMonotonicGradientDescent(data, coefficients);
+    MakeQuadraticMonotonic_ProjectiveGradientDescent(data, coefficients);
 
     printf("Fit: %f * x^2 + %f * x + %f\n\n", coefficients[0], coefficients[1], coefficients[2]);
     printf("A = %f\n", coefficients[0]);
@@ -921,6 +920,8 @@ int main(int argc, char** argv)
 
 TODO:
 * Next: maybe get an actual quadratic interpolation search working?
+
+* include the initial (monotonic) quadratic curve fit in the csv so we can graph it along w/ the graph shape.
 
 * this is the quadratic fit search, clean out linear stuff when ready.
 * to get a quadratic least squares fit, maybe could do gradient descent for now, and say "if you could calculate this more optimally, it would get more compelling"?
