@@ -549,48 +549,67 @@ Vec3 CalculateErrorSquaredGradient(const Vec2u data[3], const Vec3& coefficients
 
 void MakeMonotonicSingleStep(const Vec2u data[3], Vec3& coefficients)
 {
+    // f(x) = Ax^2 + Bx + C
+    // f'(x) = 2Ax+B
+    //
+    // if x in [a,b] then we want f'(a) >= 0 and f'(b) >= 0
+    // assumes a > b!
+    //
+    // 2Aa >= -B
+    // 2Ab >= -B
+    //
+    // Strategy: test each. Figure out how much adjustment needs to happen on each side of the equation to fix it. Apply
+    // half of the adjustment on each side.
+    //
+    // if A is greater than or equal to zero, that means increasing the derivative at a can't decrease the derivative at b.
+    // So, we test/adjust the derivative at a, and then the derivative at b.
+    // Else, we test/adjust the derivative at b, and then the derivative at a.
+    size_t firstTestIndex = (coefficients[0] >= 0.0f) ? 0 : 2;
+    size_t secondTestIndex = (coefficients[0] >= 0.0f) ? 2 : 0;
 
-    // TODO: try Wayne's thing of: 2Aa > -B and 2Ab > -B, where x in [a,b]
-    // 2Aa + B >= 0, 2Ab + B >= 0
-
-
-#if 1
-    // f(x)  = A*x^2 + B*x + C
-    // f'(x) = 2Ax + B
-    // f'(0) = B
-    // f'(max) = 2*A*max + B
-
-    // This function does 2 steps:
-    // 1) Makes sure the derivatives are positive
-    // 2) If it made a change, vertically adjusts the function to minimize least squared error (ie move c)
-
-    // One of the derivatives might be negative.
-    // if it starts negative - f'(0) is negative - then make B 0. Note this cannot make the end derivative negative!
-    // else if it ends negative - f'(max) is negative - then B is known to be positive, and so is max, so we should set A = -B/(2*max)
-
-
-    // TODO: no, we don't move the points here, but that isn't a bad idea! just not something i pursued.
-    // TODO: motivation here: the points are monotonic, so the curve should be mostly monotonic. Nudge it that way, and hope the error doesn't increase too much.
-
-    // if the derivative starts negative, make it zero
-    if (coefficients[1] < 0.0f)
+    // first test
+    float derivativeFirst = 2.0f * coefficients[0] * float(data[firstTestIndex][0]) + coefficients[1];
+    if (derivativeFirst < 0.0f)
     {
-        coefficients[1] = 0.0f;
+        // split the derivative adjustment across the two terms in Ax + B if we can
+        if (data[firstTestIndex][0] > 0)
+        {
+            float adjustAmount = (-derivativeFirst) / 2.0f;
+            coefficients[0] += adjustAmount / (2.0f * float(data[firstTestIndex][0]));
+            coefficients[1] += adjustAmount;
+        }
+        // else, x is zero so we can only adjust the B term
+        else
+        {
+            coefficients[1] += -derivativeFirst;
+        }
     }
-    // else if it ends negative
-    else if (2.0f * coefficients[0] * data[2][0] + coefficients[1] < 0.0)
-    {
-        coefficients[0] = -coefficients[1] / (2.0f * data[2][0]);
 
-        float test = 2.0f * coefficients[0] * data[2][0] + coefficients[1];
-        int ijkl = 0;
-    }
-    // else if it already is monotonic, we are done
-    else
+    // second test
+    float derivativeSecond = 2.0f * coefficients[0] * float(data[secondTestIndex][0]) + coefficients[1];
+    if (derivativeSecond < 0.0f)
     {
-        return;
+        // split the derivative adjustment across the two terms in Ax + B if we can
+        if (data[secondTestIndex][0] > 0)
+        {
+            float adjustAmount = (-derivativeSecond) / 2.0f;
+            coefficients[0] += adjustAmount / (2.0f * float(data[secondTestIndex][0]));
+            coefficients[1] += adjustAmount;
+        }
+        // else, x is zero so we can only adjust the B term
+        else
+        {
+            coefficients[1] += -derivativeSecond;
+        }
     }
-#endif
+
+    // make sure we were successful
+    float derivativeStart = 2.0f * coefficients[0] * float(data[0][0]) + coefficients[1];
+    float derivativeEnd = 2.0f * coefficients[0] * float(data[2][0]) + coefficients[1];
+    if (derivativeStart < 0.0f || derivativeEnd < 0.0f)
+    {
+        printf("ERROR! MakeMonotonicSingleStep() failed!!");
+    }
 }
 
 void MakeMonotonicGradientDescent(const Vec2u data[3], Vec3& coefficients)
@@ -692,11 +711,6 @@ void QuadraticFitTest(const Vec2u data[3])
 
 int main(int argc, char** argv)
 {
-    // TODO: next, update MakeMonotonicSingleStep() to try Wayne's thing
-
-    // TODO: with the last value being 3, a gradient descent step size of 0.1 is too large and it's unstable (why?!)
-    // TODO: it might be the gradient step thing. Really, the gradient from the first step should be zero since it's a perfect fit.
-    // TODO: it's probably from using finite differences instead of an analytical derivatives. fix that maybe?
     Vec2u data[3] = { {0,1}, {1,2}, {2, 10} };
 
     QuadraticFitTest(data);
@@ -906,22 +920,21 @@ int main(int argc, char** argv)
 /*
 
 TODO:
+* Next: maybe get an actual quadratic interpolation search working?
+
 * this is the quadratic fit search, clean out linear stuff when ready.
 * to get a quadratic least squares fit, maybe could do gradient descent for now, and say "if you could calculate this more optimally, it would get more compelling"?
  * could maybe take a curve, make it monotonic, then move it up or down to minimize error (gradient descent C, or better if we can).
 * the real solution might have to be something like this: https://en.wikipedia.org/wiki/Quadratic_programming
 
-? how many steps should we take with gradient descent?
+* try your idea of moving point 0 down til non negative gradient, or point 2 up til same, then moving the entire curve to balance the error.
+ * can compare results vs the better gradient descent found curve
+
 
 ! monotonic quadratic fit idea: make the curve monotonic by moving middle point up or down. move the whole curve ("c") up or down by half that amount to center it.
 * Revised:
  * if it starts out at a negative derivative, move p0 down until it's 0. whatever that amount moved down, move the entire curve up 2/3 of that amount, so each point is 1/3 that distance away from the fit curve.
  * if it ends at a negative derivative, move p2 up until it's 0. Whatever that amount moved up, move the entire curve down 2/3 of that amount, so each point is 1/3 that distance away from the fit curve.
-! maybe also try some kind of gradient descent thing and see how your fits compare?
-
-* projective gradient descent...
- * do gradient descent but each step, project the point back to a valid point - aka if derivatives need to be > 0, fix it so they are.
- * likely need a population, i'd imagine, to avoid local minima
 
  * need to test against a normal distribution.
   * include gradient descent version?
@@ -936,6 +949,9 @@ NOTES:
  * when it's very slow to read from the list, or calculate the item! (like ray marching, or maybe you are trying to find a "minimum error" of a machine learning thing?)
 
 
+* projective gradient descent...
+ * do gradient descent but each step, project the point back to a valid point - aka if derivatives need to be > 0, fix it so they are.
+
 ! the way i'm doing a quadratic monotonic function fit isn't the only way, and probably isn't the best way for minimizing error of the fit vs the actual data set.
  ? monotonic least squares would be cool. I guess the general case you'd have to say if you want any anchor points?
 
@@ -943,5 +959,7 @@ NOTES:
 
 ? quadratic programming? convex optimization? lagrange multipliers.
  * i wish i knew these things. Maybe later & i can explain them with blog posts of their own :P
+
+* thank wayne (and others?) for the math help?
 
 */
