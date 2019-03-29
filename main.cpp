@@ -511,12 +511,14 @@ void MakeQuadraticMonotonic_ProjectiveGradientDescent_ProjectValid(const Vec2u d
         }
     }
 
+    // TODO: there is some sort of problem here, dig into it.  maybe could store off initial values and move it back up to the top and step through it again?
+
     // make sure we were successful
     float derivativeStart = 2.0f * coefficients[0] * float(data[0][0]) + coefficients[1];
     float derivativeEnd = 2.0f * coefficients[0] * float(data[2][0]) + coefficients[1];
     if (derivativeStart < 0.0f || derivativeEnd < 0.0f)
     {
-        printf("ERROR! MakeMonotonicSingleStep() failed!!");
+        printf("ERROR! MakeMonotonicSingleStep() failed!!\n");
     }
 }
 
@@ -660,8 +662,6 @@ TestResults TestList_QuadraticFit(const std::vector<size_t>& values, size_t sear
 
     while (1)
     {
-        // TODO: what does the discriminant and guesses look like for non monotonic case? I'm betting the guesses are ambiguous.
-
         // make a guess, by using the quadratic equation to plug in y and get an x
         ret.guesses++;
 
@@ -684,8 +684,6 @@ TestResults TestList_QuadraticFit(const std::vector<size_t>& values, size_t sear
         guessIndex = Clamp(minIndex + 1, maxIndex - 1, guessIndex);
         size_t guess = values[guessIndex];
 
-        // TODO: update "mid" point too. call it third? if old min/max is less out of bounds than current mid point, use it, else keep the current mid point
-
         // if we found it, return success
         if (guess == searchValue)
         {
@@ -697,9 +695,11 @@ TestResults TestList_QuadraticFit(const std::vector<size_t>& values, size_t sear
         if (guess < searchValue)
         {
             int oldMinIndex = minIndex;
+            size_t oldMin = min;
             minIndex = guessIndex;
             min = guess;
 
+            // for our "third point", we should use the old min, if it's less far out of bounds than the current "third point"
             int midIndexDistance = 0;
             if (midIndex < minIndex)
                 midIndexDistance = minIndex - midIndex;
@@ -708,15 +708,21 @@ TestResults TestList_QuadraticFit(const std::vector<size_t>& values, size_t sear
 
             int oldMinIndexDistance = minIndex - oldMinIndex;
 
-            midIndex = oldMinIndexDistance < midIndexDistance ? minIndex : midIndex;
+            if (oldMinIndexDistance < midIndexDistance)
+            {
+                midIndex = oldMinIndex;
+                mid = oldMin;
+            }
         }
         // else we were too high, this is our new maximum
         else
         {
             int oldMaxIndex = maxIndex;
+            size_t oldMax = max;
             maxIndex = guessIndex;
             max = guess;
 
+            // for our "third point", we should use the old max, if it's less far out of bounds than the current "third point"
             int midIndexDistance = 0;
             if (midIndex < minIndex)
                 midIndexDistance = minIndex - midIndex;
@@ -725,7 +731,11 @@ TestResults TestList_QuadraticFit(const std::vector<size_t>& values, size_t sear
 
             int oldMaxIndexDistance = maxIndex - oldMaxIndex;
 
-            midIndex = oldMaxIndexDistance < midIndexDistance ? maxIndex : midIndex;
+            if (oldMaxIndexDistance < midIndexDistance)
+            {
+                midIndex = oldMaxIndex;
+                mid = oldMax;
+            }
         }
 
         // TODO: i think we exit out when the remaining list size is <= 3?
@@ -739,18 +749,37 @@ TestResults TestList_QuadraticFit(const std::vector<size_t>& values, size_t sear
         }
 
         // do another quadratic fit!
-        Vec2u data[3] =
+        // We need a sorted list of minIndex, midIndex, maxIndex.
+        // We know minIndex < MaxIndex, but we don't know where midIndex fits.
+        Vec2u data[3];
+        Vec2u minv = { size_t(minIndex), min };
+        Vec2u midv = { size_t(midIndex), mid };
+        Vec2u maxv = { size_t(maxIndex), max };
+
+        if (midIndex <= minIndex)
         {
-            {size_t(minIndex), min},
-            {size_t(midIndex), mid},
-            {size_t(maxIndex), max}
-        };
+            data[0] = midv;
+            data[1] = minv;
+            data[2] = maxv;
+        }
+        else if (midIndex <= minIndex)
+        {
+            data[0] = minv;
+            data[1] = midv;
+            data[2] = maxv;
+        }
+        else
+        {
+            data[0] = minv;
+            data[1] = maxv;
+            data[2] = midv;
+        }
+
         QuadraticFit(data, coefficiants);
         MakeQuadraticMonotonic_ProjectiveGradientDescent(data, coefficiants);
 
-        // TODO: need to update "mid" value, not just mid index
-        // TODO: also, rename mid to "third" since it might not be in the middle
-
+        // TODO: rename mid to "third" since it might not be in the middle
+        // TODO: what does the discriminant and guesses look like for non monotonic case? I'm betting the guesses are ambiguous.
         // TODO: need to thoroughly test this!
     }
 
@@ -1135,6 +1164,7 @@ NOTES:
 ? when would perf be obviously super compelling?
  * when it's very slow to read from the list, or calculate the item! (like ray marching, or maybe you are trying to find a "minimum error" of a machine learning thing?)
 
+* perf isn't appropriate to measure. not even trying to do things quickly (eg gradient descent in search iteration!), only looking at number of guesses.
 
 * projective gradient descent...
  * do gradient descent but each step, project the point back to a valid point - aka if derivatives need to be > 0, fix it so they are.
