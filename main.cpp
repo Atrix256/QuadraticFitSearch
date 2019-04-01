@@ -6,6 +6,7 @@
 #include <string>
 #include <chrono>
 #include <array>
+#include <assert.h>
 
 static const size_t c_maxValue = 2000;           // the sorted arrays will have values between 0 and this number in them (inclusive)
 static const size_t c_maxNumValues = 1000;       // the graphs will graph between 1 and this many values in a sorted array
@@ -28,6 +29,7 @@ using TestListFn = TestResults(*)(const std::vector<size_t>& values, size_t sear
 using Vec2u = std::array<size_t, 2>;
 using Vec3u = std::array<size_t, 3>;
 using Vec3 = std::array<float, 3>;
+using Vec3d = std::array<double, 3>;
 
 struct MakeListInfo
 {
@@ -57,6 +59,36 @@ T Clamp(T min, T max, T value)
 float Lerp(float a, float b, float t)
 {
     return (1.0f - t) * a + t * b;
+}
+
+void Validate(float f)
+{
+    // TODO: make this an assert / printf before calling it good?
+    //assert(isfinite(f));
+    if (!isfinite(f))
+        int ijkl = 0;
+}
+
+void Validate(double f)
+{
+    // TODO: make this an assert / printf before calling it good?
+    //assert(isfinite(f));
+    if (!isfinite(f))
+        int ijkl = 0;
+}
+
+void Validate(const Vec3& v)
+{
+    Validate(v[0]);
+    Validate(v[1]);
+    Validate(v[2]);
+}
+
+void Validate(const Vec3d& v)
+{
+    Validate(v[0]);
+    Validate(v[1]);
+    Validate(v[2]);
 }
 
 // ------------------------ MAKE LIST FUNCTIONS ------------------------
@@ -383,8 +415,6 @@ float CalculateMeanSquaredError(const Vec2u data[3], const Vec3& coefficients)
 
 Vec3 CalculateErrorSquaredGradient(const Vec2u data[3], const Vec3& coefficients)
 {
-    Vec3 errorGradient = { 0.0f, 0.0f, 0.0f };
-
 #if 1  // Calculate error squared gradient analytically
 
     // Function = Ax^2+Bx+C
@@ -409,37 +439,48 @@ Vec3 CalculateErrorSquaredGradient(const Vec2u data[3], const Vec3& coefficients
     //              multiply by x to get dEerror^2 / dA
 
     // how much the error squared for a single point changes as C changes
-    auto dErrorSquared_dC_SinglePoint = [](const Vec3& coefficients, const Vec2u& point) -> float
+    auto dErrorSquared_dC_SinglePoint = [](const Vec3& coefficients, const Vec2u& point) -> double
     {
-        float A = coefficients[0];
-        float B = coefficients[1];
-        float C = coefficients[2];
+        double A = coefficients[0];
+        double B = coefficients[1];
+        double C = coefficients[2];
 
-        float x = float(point[0]);
-        float y = float(point[1]);
+        double x = double(point[0]);
+        double y = double(point[1]);
 
         // 2Ax^2 + 2Bx + 2C - 2y
-        return 2.0f*A*x*x +
-               2.0f*B*x +
-               2.0f*C -
-               2.0f*y;
+        return 2.0*A*x*x +
+               2.0*B*x +
+               2.0*C -
+               2.0*y;
     };
 
     // calculate the combined error squared gradient for all three points
+    Vec3d errorGradient = { 0.0, 0.0, 0.0 };
     for (int i = 0; i < 3; ++i)
     {
-        float dErrorSquared_dC = dErrorSquared_dC_SinglePoint(coefficients, data[i]);
-        float x = float(data[i][0]);
+        double dErrorSquared_dC = dErrorSquared_dC_SinglePoint(coefficients, data[i]);
+        double x = double(data[i][0]);
+
+        Validate(dErrorSquared_dC);
 
         errorGradient[2] += dErrorSquared_dC;
         errorGradient[1] += dErrorSquared_dC * x;
         errorGradient[0] += dErrorSquared_dC * x * x;
+        Validate(errorGradient);
     }
-    errorGradient[0] /= 3.0f;
-    errorGradient[1] /= 3.0f;
-    errorGradient[2] /= 3.0f;
+    errorGradient[0] /= 3.0;
+    errorGradient[1] /= 3.0;
+    errorGradient[2] /= 3.0;
+
+    Validate(errorGradient);
+
+    Vec3 ret = Vec3{ float(errorGradient[0]), float(errorGradient[1]) , float(errorGradient[2]) };
+    Validate(ret);
+    return ret;
 
 #else  // Calculate error squared gradient numerically using central differences.
+    Vec3 errorGradient = { 0.0f, 0.0f, 0.0f };
     static const float c_epsilon = 0.001f;
     for (int i = 0; i < 3; ++i)
     {
@@ -449,8 +490,8 @@ Vec3 CalculateErrorSquaredGradient(const Vec2u data[3], const Vec3& coefficients
         c2[i] += c_epsilon;
         errorGradient[i] = (CalculateMeanSquaredError(data, c2) - CalculateMeanSquaredError(data, c1)) / (c_epsilon * 2.0f);
     }
-#endif
     return errorGradient;
+#endif
 }
 
 void MakeQuadraticMonotonic_ProjectiveGradientDescent_ProjectValid(const Vec2u data[3], Vec3& coefficients)
@@ -484,14 +525,25 @@ void MakeQuadraticMonotonic_ProjectiveGradientDescent_ProjectValid(const Vec2u d
         {
             float adjustAmount = (-derivativeFirst) / 2.0f;
             coefficients[0] += adjustAmount / (2.0f * float(data[firstTestIndex][0]));
-            coefficients[1] += adjustAmount;
+
+            // do a set, instead of the addition below, due to numerical precision issues
+            //coefficients[1] += adjustAmount;
+            coefficients[1] = -2.0f * coefficients[0] * float(data[firstTestIndex][0]);
+
+            if (2.0f * coefficients[0] * float(data[firstTestIndex][0]) + coefficients[1] < 0.0f)
+                int ijkl = 0;
         }
         // else, x is zero so we can only adjust the B term
         else
         {
-            coefficients[1] += -derivativeFirst;
+            coefficients[1] = -2.0f * coefficients[0] * float(data[firstTestIndex][0]);
+
+            if (2.0f * coefficients[0] * float(data[firstTestIndex][0]) + coefficients[1] < 0.0f)
+                int ijkl = 0;
         }
     }
+
+    // TODO give treatment to the second test like we did for the first, for setting the coefficient directly
 
     // second test
     float derivativeSecond = 2.0f * coefficients[0] * float(data[secondTestIndex][0]) + coefficients[1];
@@ -503,11 +555,17 @@ void MakeQuadraticMonotonic_ProjectiveGradientDescent_ProjectValid(const Vec2u d
             float adjustAmount = (-derivativeSecond) / 2.0f;
             coefficients[0] += adjustAmount / (2.0f * float(data[secondTestIndex][0]));
             coefficients[1] += adjustAmount;
+
+            if (2.0f * coefficients[0] * float(data[secondTestIndex][0]) + coefficients[1] < 0.0f)
+                int ijkl = 0;
         }
         // else, x is zero so we can only adjust the B term
         else
         {
             coefficients[1] += -derivativeSecond;
+
+            if (2.0f * coefficients[0] * float(data[secondTestIndex][0]) + coefficients[1] < 0.0f)
+                int ijkl = 0;
         }
     }
 
@@ -531,19 +589,36 @@ void MakeQuadraticMonotonic_ProjectiveGradientDescent(const Vec2u data[3], Vec3&
     // after each gradient descent step (projects it back into valid space).
 
     static const int c_numIterations = 100;
-    static const float c_stepSize = 0.1f;
+    static const float c_stepSize = 0.01f;
+
+    Validate(coefficients);
 
     MakeQuadraticMonotonic_ProjectiveGradientDescent_ProjectValid(data, coefficients);
+
+    Validate(coefficients);
 
     printf("Starting Error = %f\n", CalculateMeanSquaredError(data, coefficients));
 
     for (int i = 0; i < c_numIterations; ++i)
     {
+        // TODO: remove when done
+        float MSEBefore = CalculateMeanSquaredError(data, coefficients);
+
         Vec3 errorGradient = CalculateErrorSquaredGradient(data, coefficients);
         coefficients[0] -= errorGradient[0] * c_stepSize;
         coefficients[1] -= errorGradient[1] * c_stepSize;
         coefficients[2] -= errorGradient[2] * c_stepSize;
+
+        float MSEAfter = CalculateMeanSquaredError(data, coefficients);
+
+        if (MSEAfter > MSEBefore * 2 && MSEBefore > 1.0f)
+            int ijkl = 0;
+
+        Validate(coefficients);
+
         MakeQuadraticMonotonic_ProjectiveGradientDescent_ProjectValid(data, coefficients);
+
+        Validate(coefficients);
 
         //float gradientLength = sqrtf(errorGradient[0] * errorGradient[0] + errorGradient[1] * errorGradient[1] + errorGradient[2] * errorGradient[2]);
         //printf("[%i] Error = %f (grad length = %f)\n", i, CalculateMeanSquaredError(data, coefficients), gradientLength);
@@ -606,7 +681,9 @@ TestResults TestList_QuadraticFit(const std::vector<size_t>& values, size_t sear
     // get the starting min and max value.
     int minIndex = 0;
     int maxIndex = int(values.size() - 1);
-    int midIndex = (minIndex + maxIndex) / 2;
+    int midIndex = Clamp(minIndex + 1, maxIndex - 1, (minIndex + maxIndex) / 2);
+    if (minIndex == maxIndex)
+        midIndex = minIndex;
     size_t min = values[minIndex];
     size_t max = values[maxIndex];
     size_t mid = values[midIndex];
@@ -638,15 +715,20 @@ TestResults TestList_QuadraticFit(const std::vector<size_t>& values, size_t sear
         ret.index = maxIndex;
         return ret;
     }
-
-    // we can't handle just 2 items in a list
-    if (values.size() == 2)
+    if (searchValue == mid)
     {
+        ret.index = midIndex;
+        return ret;
+    }
+
+    // if 3 or less items in the list, we are done
+    if (values.size() <= 3)
+    {
+        // TODO: return the index to insert it into.
         ret.index = 0;
         ret.found = false;
         return ret;
     }
-
 
     Vec3 coefficiants;
     {
@@ -662,6 +744,8 @@ TestResults TestList_QuadraticFit(const std::vector<size_t>& values, size_t sear
 
     while (1)
     {
+        Validate(coefficiants);
+
         // make a guess, by using the quadratic equation to plug in y and get an x
         ret.guesses++;
 
@@ -708,10 +792,18 @@ TestResults TestList_QuadraticFit(const std::vector<size_t>& values, size_t sear
 
             int oldMinIndexDistance = minIndex - oldMinIndex;
 
-            if (oldMinIndexDistance < midIndexDistance)
+            if (oldMinIndexDistance < midIndexDistance || minIndex == midIndex)
             {
                 midIndex = oldMinIndex;
                 mid = oldMin;
+
+                if (midIndex == minIndex || midIndex == maxIndex)
+                    int ijkl = 0;
+            }
+            else
+            {
+                if (midIndex == minIndex || midIndex == maxIndex)
+                    int ijkl = 0;
             }
         }
         // else we were too high, this is our new maximum
@@ -731,10 +823,18 @@ TestResults TestList_QuadraticFit(const std::vector<size_t>& values, size_t sear
 
             int oldMaxIndexDistance = maxIndex - oldMaxIndex;
 
-            if (oldMaxIndexDistance < midIndexDistance)
+            if (oldMaxIndexDistance < midIndexDistance || maxIndex == midIndex)
             {
                 midIndex = oldMaxIndex;
                 mid = oldMax;
+
+                if (midIndex == minIndex || midIndex == maxIndex)
+                    int ijkl = 0;
+            }
+            else
+            {
+                if (midIndex == minIndex || midIndex == maxIndex)
+                    int ijkl = 0;
             }
         }
 
@@ -775,8 +875,13 @@ TestResults TestList_QuadraticFit(const std::vector<size_t>& values, size_t sear
             data[2] = midv;
         }
 
+        // TODO: need to make sure that mid index is never the same as min/max index. the quadratic fit breaks down then.
+        // maybe need to make it start the function by checking the "third" point (mid), so we know that the search value is never at mid. can exit when 3 locations left.
+
         QuadraticFit(data, coefficiants);
+        Validate(coefficiants);
         MakeQuadraticMonotonic_ProjectiveGradientDescent(data, coefficiants);
+        Validate(coefficiants);
 
         // TODO: rename mid to "third" since it might not be in the middle
         // TODO: what does the discriminant and guesses look like for non monotonic case? I'm betting the guesses are ambiguous.
@@ -1128,6 +1233,9 @@ int main(int argc, char** argv)
 /*
 
 TODO:
+
+PROBLEM: the step size is not always convergent. Try doing "back tracking line search"?
+
 * Next: maybe get an actual quadratic interpolation search working?
 
 * include the initial (monotonic) quadratic curve fit in the csv so we can graph it along w/ the graph shape.
