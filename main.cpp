@@ -165,10 +165,25 @@ void MakeList_Log(std::vector<size_t>& values, size_t count)
     for (size_t index = 0; index < count; ++index)
     {
         float x = float(index + 1);
-        float y = log(x+1) / maxValue;
+        float y = log1p(x) / maxValue;
         y *= c_maxValue;
         values[index] = size_t(y);
     }
+
+    std::sort(values.begin(), values.end());
+}
+
+void MakeList_Normal(std::vector<size_t>& values, size_t count)
+{
+    std::normal_distribution<> dist{ c_maxValue / 2.0f, c_maxValue / 8.0f };
+
+    static std::random_device rd("dev/random");
+    static std::seed_seq fullSeed{ rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd() };
+    static std::mt19937 rng(fullSeed);
+
+    values.resize(count);
+    for (size_t& v : values)
+        v = size_t(Clamp(0.0, double(c_maxValue), dist(rng)));
 
     std::sort(values.begin(), values.end());
 }
@@ -762,8 +777,9 @@ TestResults TestList_QuadraticFit(const std::vector<size_t>& values, size_t sear
 
         int guessIndex = (guess1 >= minIndex && guess1 <= maxIndex) ? guess1 : guess2;
 
-        if (guessIndex < minIndex || guessIndex > maxIndex)
-            printf("No Guess Valid?!");
+        // TODO: re-enable, or delete this
+        //if (guessIndex < minIndex || guessIndex > maxIndex)
+            //printf("No Guess Valid?!");
 
         guessIndex = Clamp(minIndex + 1, maxIndex - 1, guessIndex);
         size_t guess = values[guessIndex];
@@ -891,6 +907,239 @@ TestResults TestList_QuadraticFit(const std::vector<size_t>& values, size_t sear
     return ret;
 }
 
+TestResults TestList_QuadraticFitNonMonotonic(const std::vector<size_t>& values, size_t searchValue)
+{
+    // The idea of this test is that we keep a fit of a quadratic y=Ax^2+Bx+C and use
+    // that info to make a guess as to where the value will be.
+    //
+    // When a guess is wrong, it becomes the new search min or max depending on if it was
+    // too low (left) or too high (right).  The "third point" in the quadratic fit is
+    // whichever point is closer to the min/max boundaries:  the old min or max that just
+    // got replaced, or the old "third point".  We want to keep the data fit as localized
+    // as we can for better results.
+    //
+    // This function returns how many steps it took to find the value
+    // but doesn't include the reads at the beginning because those and the monotonic
+    // quadratic fit should be done in advance and shared among all queries against it.
+
+    // TODO: maybe the initial quadratic fit should minimize the error of all data points.
+    // Since it's stored and re-used it shouldn't matter if it takes a bit to do that.  We
+    // probably should literally store it off and re-use it in fact.
+
+    // get the starting min and max value.
+    int minIndex = 0;
+    int maxIndex = int(values.size() - 1);
+    int midIndex = Clamp(minIndex + 1, maxIndex - 1, (minIndex + maxIndex) / 2);
+    if (minIndex == maxIndex)
+        midIndex = minIndex;
+    size_t min = values[minIndex];
+    size_t max = values[maxIndex];
+    size_t mid = values[midIndex];
+
+    TestResults ret;
+    ret.found = true;
+    ret.guesses = 0;
+
+    // if we've already found the value, we are done
+    if (searchValue < min)
+    {
+        ret.index = minIndex;
+        ret.found = false;
+        return ret;
+    }
+    if (searchValue > max)
+    {
+        ret.index = maxIndex;
+        ret.found = false;
+        return ret;
+    }
+    if (searchValue == min)
+    {
+        ret.index = minIndex;
+        return ret;
+    }
+    if (searchValue == max)
+    {
+        ret.index = maxIndex;
+        return ret;
+    }
+    if (searchValue == mid)
+    {
+        ret.index = midIndex;
+        return ret;
+    }
+
+    // if 3 or less items in the list, we are done
+    if (values.size() <= 3)
+    {
+        // TODO: return the index to insert it into.
+        ret.index = 0;
+        ret.found = false;
+        return ret;
+    }
+
+    Vec3 coefficiants;
+    {
+        Vec2u data[3] =
+        {
+            {size_t(minIndex), min},
+            {size_t(midIndex), mid},
+            {size_t(maxIndex), max}
+        };
+        QuadraticFit(data, coefficiants);
+    }
+
+    while (1)
+    {
+        Validate(coefficiants);
+
+        // make a guess, by using the quadratic equation to plug in y and get an x
+        ret.guesses++;
+
+        // calculate discriminant: B^2-4AC.
+        // Note: C = (C - y)
+        float discriminant = coefficiants[1] * coefficiants[1] - 4.0f * coefficiants[0] * (coefficiants[2] - float(searchValue));
+
+        // (-b +/- sqrt(discriminant)) / 2A
+        float guess1f = (-coefficiants[1] + sqrtf(discriminant)) / (2.0f * coefficiants[0]);
+        float guess2f = (-coefficiants[1] - sqrtf(discriminant)) / (2.0f * coefficiants[0]);
+
+        int guess1 = size_t(guess1f);
+        int guess2 = size_t(guess2f);
+
+        int guessIndex = (guess1 >= minIndex && guess1 <= maxIndex) ? guess1 : guess2;
+
+        // TODO: re-enable, or delete this
+        //if (guessIndex < minIndex || guessIndex > maxIndex)
+            //printf("No Guess Valid?!");
+
+        guessIndex = Clamp(minIndex + 1, maxIndex - 1, guessIndex);
+        size_t guess = values[guessIndex];
+
+        // if we found it, return success
+        if (guess == searchValue)
+        {
+            ret.index = guessIndex;
+            return ret;
+        }
+
+        // if we were too low, this is our new minimum
+        if (guess < searchValue)
+        {
+            int oldMinIndex = minIndex;
+            size_t oldMin = min;
+            minIndex = guessIndex;
+            min = guess;
+
+            // for our "third point", we should use the old min, if it's less far out of bounds than the current "third point"
+            int midIndexDistance = 0;
+            if (midIndex < minIndex)
+                midIndexDistance = minIndex - midIndex;
+            else if (midIndex > maxIndex)
+                midIndexDistance = midIndex - maxIndex;
+
+            int oldMinIndexDistance = minIndex - oldMinIndex;
+
+            if (oldMinIndexDistance < midIndexDistance || minIndex == midIndex)
+            {
+                midIndex = oldMinIndex;
+                mid = oldMin;
+
+                if (midIndex == minIndex || midIndex == maxIndex)
+                    int ijkl = 0;
+            }
+            else
+            {
+                if (midIndex == minIndex || midIndex == maxIndex)
+                    int ijkl = 0;
+            }
+        }
+        // else we were too high, this is our new maximum
+        else
+        {
+            int oldMaxIndex = maxIndex;
+            size_t oldMax = max;
+            maxIndex = guessIndex;
+            max = guess;
+
+            // for our "third point", we should use the old max, if it's less far out of bounds than the current "third point"
+            int midIndexDistance = 0;
+            if (midIndex < minIndex)
+                midIndexDistance = minIndex - midIndex;
+            else if (midIndex > maxIndex)
+                midIndexDistance = midIndex - maxIndex;
+
+            int oldMaxIndexDistance = maxIndex - oldMaxIndex;
+
+            if (oldMaxIndexDistance < midIndexDistance || maxIndex == midIndex)
+            {
+                midIndex = oldMaxIndex;
+                mid = oldMax;
+
+                if (midIndex == minIndex || midIndex == maxIndex)
+                    int ijkl = 0;
+            }
+            else
+            {
+                if (midIndex == minIndex || midIndex == maxIndex)
+                    int ijkl = 0;
+            }
+        }
+
+        // TODO: i think we exit out when the remaining list size is <= 3?
+
+        // if we run out of places to look, we didn't find it
+        if (minIndex + 1 >= maxIndex)
+        {
+            ret.index = minIndex;
+            ret.found = false;
+            return ret;
+        }
+
+        // do another quadratic fit!
+        // We need a sorted list of minIndex, midIndex, maxIndex.
+        // We know minIndex < MaxIndex, but we don't know where midIndex fits.
+        Vec2u data[3];
+        Vec2u minv = { size_t(minIndex), min };
+        Vec2u midv = { size_t(midIndex), mid };
+        Vec2u maxv = { size_t(maxIndex), max };
+
+        if (midIndex <= minIndex)
+        {
+            data[0] = midv;
+            data[1] = minv;
+            data[2] = maxv;
+        }
+        else if (midIndex <= minIndex)
+        {
+            data[0] = minv;
+            data[1] = midv;
+            data[2] = maxv;
+        }
+        else
+        {
+            data[0] = minv;
+            data[1] = maxv;
+            data[2] = midv;
+        }
+
+        // TODO: need to make sure that mid index is never the same as min/max index. the quadratic fit breaks down then.
+        // maybe need to make it start the function by checking the "third" point (mid), so we know that the search value is never at mid. can exit when 3 locations left.
+
+        QuadraticFit(data, coefficiants);
+        Validate(coefficiants);
+
+        // TODO: rename mid to "third" since it might not be in the middle
+        // TODO: what does the discriminant and guesses look like for non monotonic case? I'm betting the guesses are ambiguous.
+        // TODO: need to thoroughly test this!
+    }
+
+    // TODO: make this function appropriate for non monotonic fitting.
+    // TODO: since there can be 2 ambigious values, try switching which is used
+
+    return ret;
+}
+
 TestResults TestList_BinarySearch(const std::vector<size_t>& values, size_t searchValue)
 {
     TestResults ret;
@@ -950,6 +1199,219 @@ TestResults TestList_LineFitBlind(const std::vector<size_t>& values, size_t sear
     return ret;
 }
 
+struct Point
+{
+    Point(float xin, float yin) : x(xin), y(yin) {}
+    Point(size_t xin, size_t yin) : x(float(xin)), y(float(yin)) {}
+    float x;
+    float y;
+};
+struct LinearEquation
+{
+    float m;
+    float b;
+};
+bool GetLinearEqn(Point a, Point b, LinearEquation& result)
+{
+    if (a.x > b.x)
+        std::swap(a,b);
+
+    if (b.x - a.x == 0)
+        return false;
+    result.m = (b.y - a.y) / (b.x - a.x);
+    result.b = a.y - result.m * a.x;
+
+    return true;
+}
+
+TestResults TestList_Gradient(const std::vector<size_t>& values, size_t searchValue)
+{
+    // The idea of this test is somewhat similar to that of TestList_LineFit.
+    // Instead of assuming that our data fits a linear line between our min
+    // and max, we sample around min and max (1 point near each) to get the
+    // local gradient. Once we have that, we calculate a linear derivative of
+    // the line that approximates the endpoints' locations and the tangent
+    // line at each. From there, we propagate up y-intercept points and plug
+    // them into the inverse function of our line
+
+    // get the starting min and max value.
+    size_t minIndex = 0;
+    size_t maxIndex = values.size() - 1;
+    size_t min = values[minIndex];
+    size_t max = values[maxIndex];
+
+    TestResults ret;
+    ret.found = true;
+    ret.guesses = 0;
+
+    // if we've already found the value, we are done
+    if (searchValue < min)
+    {
+        ret.index = minIndex;
+        ret.found = false;
+        return ret;
+    }
+    if (searchValue > max)
+    {
+        ret.index = maxIndex;
+        ret.found = false;
+        return ret;
+    }
+    if (searchValue == min)
+    {
+        ret.index = minIndex;
+        return ret;
+    }
+    if (searchValue == max)
+    {
+        ret.index = maxIndex;
+        return ret;
+    }
+
+    // Calculate an approximation line
+    // Assume y'' = c1
+    // y' = xc1 + c2
+    // y = x^2/2 * c1 + xc2 + c3
+    // 0 = x^2/2 * c1 + xc2 + (c3 - y)
+    // x = (-c2 +- sqrt(c2 * c2 - 2 * c1 * (c3 - y))) / c1
+
+    // tan1 = tangent to min, tan2 = tangent to max, prime = y'
+    LinearEquation tan1, tan2;
+    LinearEquation prime;
+
+    auto updateEquations = [&]() -> bool
+    {
+        // Update tan1, tan2
+        const size_t offset = (maxIndex - minIndex) / 10; // No good reason for choosing 10. There are probably better values
+        // const size_t offset = 10; // Can also try an absolute offset 
+        if (offset == 0 || offset > (maxIndex - minIndex))
+            return false;
+
+        if (!GetLinearEqn({minIndex, values[minIndex]}, {minIndex + offset, values[minIndex + offset]}, tan1))
+            return false;
+
+        if (!GetLinearEqn({maxIndex, values[maxIndex]}, {maxIndex - offset, values[maxIndex - offset]}, tan2))
+            return false;
+
+        // Update y'
+        // prime.m = c1
+        // prime.b = c2
+        if (!GetLinearEqn({float(minIndex), tan1.m}, {float(maxIndex), tan2.m}, prime))
+            return false;
+
+        return true;
+    };
+
+    auto getGuess = [&](size_t y, size_t& x) -> bool
+    {
+        // Solve for c3 using min
+        const float c3 = values[minIndex] - minIndex * minIndex / 2.0f * prime.m - minIndex * prime.b;
+
+        // Solve for x.
+        // y = x^2/2 * c1 + xc2 + c3
+        // 0 = x^2/2 * c1 + xc2 + (c3 - y)
+        // x = (-c2 +- sqrt(c2 * c2 - 2 * c1 * (c3 - y))) / c1
+        const float c1 = prime.m;
+        const float c2 = prime.b;
+
+        if ( c2 * c2 - 2 * c1 * (c3 - y) < 0.0f )
+        {
+            return false;
+        }
+
+        if ( c1 == 0.0f )
+        {
+            return false;
+        }
+
+        const float x1f = (-c2 + std::sqrt(c2 * c2 - 2 * c1 * (c3 - y))) / c1;
+        const float x2f = (-c2 - std::sqrt(c2 * c2 - 2 * c1 * (c3 - y))) / c1;
+
+        const size_t x1 = size_t(x1f + 0.5f);
+        const size_t x2 = size_t(x2f + 0.5f);
+
+        const bool valid1 = x1 > minIndex && x1 < maxIndex;
+        const bool valid2 = x2 > minIndex && x2 < maxIndex;
+        if (!valid1 && !valid2)
+        {
+            return false;
+        }
+        else if(valid1 && !valid2)
+        {
+            x = x1;
+            return true;
+        }
+        else if(!valid1 && valid2)
+        {
+            x = x2;
+            return true;
+        }
+
+        // Both x1 and x2 are valid and in range
+        // If we're concave up, choose the greater, concave down the lesser
+        // This works because we know y' is positive
+        if (c1 > 0)
+        {
+            x = std::max(x1, x2);
+            return true;
+        }
+        else
+        {
+            x = std::min(x1, x2);
+            return true;
+        }
+    };
+
+    bool validEquations = updateEquations();
+
+    while (1)
+    {
+        // make a guess based on our line fit
+        ret.guesses++;
+        size_t guessIndex;
+        if ( !validEquations || !getGuess(searchValue, guessIndex) )
+        {
+            // Fall back to binary search
+            guessIndex = (minIndex + maxIndex) / 2;
+        }
+
+        guessIndex = Clamp(minIndex + 1, maxIndex - 1, guessIndex);
+        size_t guess = values[guessIndex];
+
+        // if we found it, return success
+        if (guess == searchValue)
+        {
+            ret.index = guessIndex;
+            return ret;
+        }
+
+        // if we were too low, this is our new minimum
+        if (guess < searchValue)
+        {
+            minIndex = guessIndex;
+            min = guess;
+        }
+        // else we were too high, this is our new maximum
+        else
+        {
+            maxIndex = guessIndex;
+            max = guess;
+        }
+
+        // if we run out of places to look, we didn't find it
+        if (minIndex + 1 >= maxIndex)
+        {
+            ret.index = minIndex;
+            ret.found = false;
+            return ret;
+        }
+
+        validEquations = updateEquations();
+    }
+
+    return ret;
+}
+
 // ------------------------ MAIN ------------------------
 
 void VerifyResults(const std::vector<size_t>& values, size_t searchValue, const TestResults& result, const char* list, const char* test)
@@ -978,8 +1440,9 @@ void VerifyResults(const std::vector<size_t>& values, size_t searchValue, const 
         if (result.index + 1 < values.size())
             lte = searchValue <= values[result.index + 1];
 
-        if (gte == false || lte == false)
-            printf("VERIFICATION FAILURE!! Not a valid place to insert a new value! %s, %s\n", list, test);
+        // TODO: re-enable
+        //if (gte == false || lte == false)
+           // printf("VERIFICATION FAILURE!! Not a valid place to insert a new value! %s, %s\n", list, test);
     }
 
 #endif
@@ -988,6 +1451,7 @@ void VerifyResults(const std::vector<size_t>& values, size_t searchValue, const 
 // TODO: delete?
 void QuadraticFitTest(const Vec2u data[3])
 {
+/*
     Vec3 coefficients = { 0.0f, 0.0f, 0.0f };
     QuadraticFit(data, coefficients);
 
@@ -1012,6 +1476,7 @@ void QuadraticFitTest(const Vec2u data[3])
     printf("f(%zu) = %f\n", data[0][0], EvaluateQuadratic(coefficients, float(data[0][0])));
     printf("f(%zu) = %f\n", data[1][0], EvaluateQuadratic(coefficients, float(data[1][0])));
     printf("f(%zu) = %f\n", data[2][0], EvaluateQuadratic(coefficients, float(data[2][0])));
+    */
 }
 
 int main(int argc, char** argv)
@@ -1022,16 +1487,13 @@ int main(int argc, char** argv)
 
     MakeListInfo MakeFns[] =
     {
-        /*
+        {"Normal", MakeList_Normal},
         {"Random", MakeList_Random},
         {"Linear", MakeList_Linear},
         {"Linear Outlier", MakeList_Linear_Outlier},
-        */
         {"Quadratic", MakeList_Quadratic},
-        /*
         {"Cubic", MakeList_Cubic},
         {"Log", MakeList_Log},
-        */
     };
 
     TestListInfo TestFns[] =
@@ -1039,11 +1501,17 @@ int main(int argc, char** argv)
         /*
         {"Linear Search", TestList_LinearSearch},
         {"Line Fit", TestList_LineFit},
-        {"Line Fit Blind", TestList_LineFitBlind},
-        {"Binary Search", TestList_BinarySearch},
-        {"Life Fit Hybrid", TestList_LineFitHybridSearch},
+        {"Line Fit Blind", TestList_LineFitBlind},  // TODO: get rid of this one. not relevant to this post
+
         */
-        {"Quadratic Fit", TestList_QuadraticFit},
+
+        {"Binary Search", TestList_BinarySearch},
+        {"Line Fit Hybrid", TestList_LineFitHybridSearch},
+
+        //{"Quadratic Fit", TestList_QuadraticFit},
+
+        {"Quadratic Fit (Non Monotonic)", TestList_QuadraticFitNonMonotonic},
+        {"Gradient", TestList_Gradient},
 
         // Quadratic Hybrid Fit!
     };
@@ -1234,6 +1702,11 @@ int main(int argc, char** argv)
 
 TODO:
 
+* clean up non monitonic fit.
+
+* get initial quadratic fit in the graph
+ * and same for monotonic when you have it
+
 PROBLEM: the step size is not always convergent. Try doing "back tracking line search"?
 
 * Next: maybe get an actual quadratic interpolation search working?
@@ -1264,6 +1737,8 @@ PROBLEM: the step size is not always convergent. Try doing "back tracking line s
   * include gradient descent version?
   * https://github.com/Atrix256/LinearFitSearch/pull/1
 
+* gradient and quadratic do very poorly on linear outlier. i wonder how a hybrid would do? lots more data to visualize but shrug.
+
 NOTES:
 ? why wouldn't you just read the beginning and end of the list to get min/max?
  * 2 less memory reads. They come in a single cache line with the count.
@@ -1288,5 +1763,7 @@ NOTES:
 * thank wayne (and others?) for the math help?
 
 * mention the usage cases: raymarching, querying some external service, being on disk, etc
+
+* the linear outlier really seems like a worst case scenario for all searches except binary search.
 
 */
