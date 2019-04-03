@@ -1766,4 +1766,6 @@ NOTES:
 
 * the linear outlier really seems like a worst case scenario for all searches except binary search.
 
+? should we show the last blog post test w/ normal distribution numbers? i think so... maybe as a first item before getting into the new stuff.
+
 */
