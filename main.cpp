@@ -1146,56 +1146,47 @@ TestResults TestList_BinarySearch(const std::vector<size_t>& values, size_t sear
     ret.found = false;
     ret.guesses = 0;
 
-size_t minIndex = 0;
-size_t maxIndex = values.size() - 1;
-while (1)
-{
-    // make a guess by looking in the middle of the unknown area
-    ret.guesses++;
-    size_t guessIndex = (minIndex + maxIndex) / 2;
-    size_t guess = values[guessIndex];
+    size_t minIndex = 0;
+    size_t maxIndex = values.size() - 1;
+    while (1)
+    {
+        // make a guess by looking in the middle of the unknown area
+        ret.guesses++;
+        size_t guessIndex = (minIndex + maxIndex) / 2;
+        size_t guess = values[guessIndex];
 
-    // found it
-    if (guess == searchValue)
-    {
-        ret.found = true;
-        ret.index = guessIndex;
-        return ret;
-    }
-    // if our guess was too low, it's the new min
-    else if (guess < searchValue)
-    {
-        minIndex = guessIndex + 1;
-    }
-    // if our guess was too high, it's the new max
-    else if (guess > searchValue)
-    {
-        // underflow prevention
-        if (guessIndex == 0)
+        // found it
+        if (guess == searchValue)
+        {
+            ret.found = true;
+            ret.index = guessIndex;
+            return ret;
+        }
+        // if our guess was too low, it's the new min
+        else if (guess < searchValue)
+        {
+            minIndex = guessIndex + 1;
+        }
+        // if our guess was too high, it's the new max
+        else if (guess > searchValue)
+        {
+            // underflow prevention
+            if (guessIndex == 0)
+            {
+                ret.index = guessIndex;
+                return ret;
+            }
+            maxIndex = guessIndex - 1;
+        }
+
+        // fail case
+        if (minIndex > maxIndex)
         {
             ret.index = guessIndex;
             return ret;
         }
-        maxIndex = guessIndex - 1;
     }
 
-    // fail case
-    if (minIndex > maxIndex)
-    {
-        ret.index = guessIndex;
-        return ret;
-    }
-}
-
-return ret;
-}
-
-TestResults TestList_LineFitBlind(const std::vector<size_t>& values, size_t searchValue)
-{
-    // If you want to know how this does against binary search without first knowing the min and max, this result is for you.
-    // It takes 2 extra samples to get the min and max, so we are counting those as guesses (memory reads).
-    TestResults ret = TestList_LineFit(values, searchValue);
-    ret.guesses += 2;
     return ret;
 }
 
@@ -1206,11 +1197,13 @@ struct Point
     float x;
     float y;
 };
+
 struct LinearEquation
 {
     float m;
     float b;
 };
+
 bool GetLinearEqn(Point a, Point b, LinearEquation& result)
 {
     if (a.x > b.x)
@@ -1448,43 +1441,8 @@ void VerifyResults(const std::vector<size_t>& values, size_t searchValue, const 
 #endif
 }
 
-// TODO: delete?
-void QuadraticFitTest(const Vec2u data[3])
-{
-/*
-    Vec3 coefficients = { 0.0f, 0.0f, 0.0f };
-    QuadraticFit(data, coefficients);
-
-    printf("Fit: %f * x^2 + %f * x + %f\n\n", coefficients[0], coefficients[1], coefficients[2]);
-    printf("A = %f\n", coefficients[0]);
-    printf("B = %f\n", coefficients[1]);
-    printf("C = %f\n\n", coefficients[2]);
-
-    printf("f(%zu) = %f\n", data[0][0], EvaluateQuadratic(coefficients, float(data[0][0])));
-    printf("f(%zu) = %f\n", data[1][0], EvaluateQuadratic(coefficients, float(data[1][0])));
-    printf("f(%zu) = %f\n", data[2][0], EvaluateQuadratic(coefficients, float(data[2][0])));
-
-    printf("Error of exact fit = %f\n", CalculateMeanSquaredError(data, coefficients));
-
-    MakeQuadraticMonotonic_ProjectiveGradientDescent(data, coefficients);
-
-    printf("Fit: %f * x^2 + %f * x + %f\n\n", coefficients[0], coefficients[1], coefficients[2]);
-    printf("A = %f\n", coefficients[0]);
-    printf("B = %f\n", coefficients[1]);
-    printf("C = %f\n\n", coefficients[2]);
-
-    printf("f(%zu) = %f\n", data[0][0], EvaluateQuadratic(coefficients, float(data[0][0])));
-    printf("f(%zu) = %f\n", data[1][0], EvaluateQuadratic(coefficients, float(data[1][0])));
-    printf("f(%zu) = %f\n", data[2][0], EvaluateQuadratic(coefficients, float(data[2][0])));
-    */
-}
-
 int main(int argc, char** argv)
 {
-    // TODO: delete when you feel like it.
-    Vec2u data[3] = { {0,1}, {1,2}, {2, 10} };
-    QuadraticFitTest(data);
-
     MakeListInfo MakeFns[] =
     {
         {"Normal", MakeList_Normal},
@@ -1498,12 +1456,8 @@ int main(int argc, char** argv)
 
     TestListInfo TestFns[] =
     {
-        /*
         {"Linear Search", TestList_LinearSearch},
         {"Line Fit", TestList_LineFit},
-        {"Line Fit Blind", TestList_LineFitBlind},  // TODO: get rid of this one. not relevant to this post
-
-        */
 
         {"Binary Search", TestList_BinarySearch},
         {"Line Fit Hybrid", TestList_LineFitHybridSearch},
@@ -1513,7 +1467,7 @@ int main(int argc, char** argv)
         {"Quadratic Fit (Non Monotonic)", TestList_QuadraticFitNonMonotonic},
         {"Gradient", TestList_Gradient},
 
-        // Quadratic Hybrid Fit!
+        // TODO: Quadratic Hybrid Fit? if necessary...
     };
 
 #if MAKE_CSVS()
@@ -1701,6 +1655,12 @@ int main(int argc, char** argv)
 /*
 
 TODO:
+
+
+* maybe make everything except monotonic fit, then figure that out last.
+ * show the initial quadratic fit of data
+
+
 
 * clean up non monitonic fit.
 
