@@ -23,8 +23,12 @@ struct TestResults
     size_t guesses;
 };
 
+typedef std::vector<std::string> TRow;
+typedef std::vector<TRow> TSheet;
+
 using MakeListFn = void(*)(std::vector<size_t>& values, size_t count);
 using TestListFn = TestResults(*)(const std::vector<size_t>& values, size_t searchValue);
+using InitialFitFn = void(*)(TSheet& csv, const std::vector<size_t>& values);
 
 using Vec2u = std::array<size_t, 2>;
 using Vec3u = std::array<size_t, 3>;
@@ -41,6 +45,7 @@ struct TestListInfo
 {
     const char* name;
     TestListFn fn;
+    InitialFitFn initialFitFn;
 };
 
 #define countof(array) (sizeof(array) / sizeof(array[0]))
@@ -907,6 +912,35 @@ TestResults TestList_QuadraticFit(const std::vector<size_t>& values, size_t sear
     return ret;
 }
 
+// TODO: should this go in another section?
+void InitialFit_QuadraticFitNonMonotonic(TSheet& csv, const std::vector<size_t>& values)
+{
+    int minIndex = 0;
+    int maxIndex = int(values.size() - 1);
+    int midIndex = Clamp(minIndex + 1, maxIndex - 1, (minIndex + maxIndex) / 2);
+    size_t min = values[minIndex];
+    size_t max = values[maxIndex];
+    size_t mid = values[midIndex];
+
+    Vec3 coefficiants;
+    {
+        Vec2u data[3] =
+        {
+            {size_t(minIndex), min},
+            {size_t(midIndex), mid},
+            {size_t(maxIndex), max}
+        };
+        QuadraticFit(data, coefficiants);
+    }
+
+    char buffer[256];
+    for (size_t i = 0; i < values.size(); ++i)
+    {
+        sprintf_s(buffer, "%i", int(EvaluateQuadratic(coefficiants, float(i))));
+        csv[i+1].push_back(buffer);
+    }
+}
+
 TestResults TestList_QuadraticFitNonMonotonic(const std::vector<size_t>& values, size_t searchValue)
 {
     // The idea of this test is that we keep a fit of a quadratic y=Ax^2+Bx+C and use
@@ -1217,6 +1251,29 @@ bool GetLinearEqn(Point a, Point b, LinearEquation& result)
     return true;
 }
 
+// TODO: should this go elsewhere?
+// TODO: don't need numvalues and valid i don't think.
+thread_local float g_TestList_Gradient_A = 0.0f;
+thread_local float g_TestList_Gradient_B = 0.0f;
+thread_local float g_TestList_Gradient_C = 0.0f;
+thread_local size_t numvalues = 0;
+thread_local bool valid = false;
+void InitialFit_Gradient(TSheet& csv, const std::vector<size_t>& values)
+{
+    Vec3 coefficiants = { g_TestList_Gradient_A, g_TestList_Gradient_B, g_TestList_Gradient_C };
+    char buffer[512];
+
+    // TODO: temp
+    //sprintf_s(buffer, "%f, %f, %f  (%zu), %s", g_TestList_Gradient_A, g_TestList_Gradient_B, g_TestList_Gradient_C, numvalues, valid ? "true" : "false");
+    //csv[1].push_back(buffer);
+
+    for (size_t i = 0; i < values.size(); ++i)
+    {
+        sprintf_s(buffer, "%zu", size_t(EvaluateQuadratic(coefficiants, float(i))));
+        csv[i + 1].push_back(buffer);
+    }
+}
+
 TestResults TestList_Gradient(const std::vector<size_t>& values, size_t searchValue)
 {
     // The idea of this test is somewhat similar to that of TestList_LineFit.
@@ -1295,6 +1352,9 @@ TestResults TestList_Gradient(const std::vector<size_t>& values, size_t searchVa
         return true;
     };
 
+    bool first = true;
+    valid = false;
+
     auto getGuess = [&](size_t y, size_t& x) -> bool
     {
         // Solve for c3 using min
@@ -1306,6 +1366,15 @@ TestResults TestList_Gradient(const std::vector<size_t>& values, size_t searchVa
         // x = (-c2 +- sqrt(c2 * c2 - 2 * c1 * (c3 - y))) / c1
         const float c1 = prime.m;
         const float c2 = prime.b;
+
+        if (first)
+        {
+            first = false;
+            g_TestList_Gradient_A = c1 / 2.0f;
+            g_TestList_Gradient_B = c2;
+            g_TestList_Gradient_C = c3;
+            numvalues = values.size();
+        }
 
         if ( c2 * c2 - 2 * c1 * (c3 - y) < 0.0f )
         {
@@ -1356,6 +1425,8 @@ TestResults TestList_Gradient(const std::vector<size_t>& values, size_t searchVa
     };
 
     bool validEquations = updateEquations();
+
+    valid = validEquations;
 
     while (1)
     {
@@ -1456,16 +1527,15 @@ int main(int argc, char** argv)
 
     TestListInfo TestFns[] =
     {
-        {"Linear Search", TestList_LinearSearch},
-        {"Line Fit", TestList_LineFit},
+        {"Linear Search", TestList_LinearSearch, nullptr},
+        {"Line Fit", TestList_LineFit, nullptr},
 
-        {"Binary Search", TestList_BinarySearch},
-        {"Line Fit Hybrid", TestList_LineFitHybridSearch},
+        {"Binary Search", TestList_BinarySearch, nullptr},
+        {"Line Fit Hybrid", TestList_LineFitHybridSearch, nullptr},
 
         //{"Quadratic Fit", TestList_QuadraticFit},
-
-        {"Quadratic Fit (Non Monotonic)", TestList_QuadraticFitNonMonotonic},
-        {"Gradient", TestList_Gradient},
+        {"Quadratic Fit (Non Monotonic)", TestList_QuadraticFitNonMonotonic, InitialFit_QuadraticFitNonMonotonic},
+        {"Gradient", TestList_Gradient, InitialFit_Gradient},
 
         // TODO: Quadratic Hybrid Fit? if necessary...
     };
@@ -1475,9 +1545,6 @@ int main(int argc, char** argv)
     size_t numThreads = std::thread::hardware_concurrency();
     std::vector<std::thread> threads;
     threads.resize(numThreads);
-
-    typedef std::vector<std::string> TRow;
-    typedef std::vector<TRow> TSheet;
 
     // for each numer sequence. Done multithreadedly
     std::atomic<size_t> nextRow(0);
@@ -1567,6 +1634,19 @@ int main(int argc, char** argv)
                         sprintf_s(buffer, "%zu", values[numValues-1]);
                         csv[numValues].push_back(buffer);
                     }
+
+                    // make a column for each test that wants to show an initial fit
+                    for (size_t testIndex = 0; testIndex < countof(TestFns); ++testIndex)
+                    {
+                        if (TestFns[testIndex].initialFitFn == nullptr)
+                            continue;
+
+                        sprintf_s(buffer, "%s Fit", TestFns[testIndex].name);
+                        csv[0].push_back(buffer);
+
+                        TestFns[testIndex].initialFitFn(csv, values);
+                    }
+
 
                     char fileName[256];
                     sprintf_s(fileName, "out/%s.csv", MakeFns[makeIndex].name);
@@ -1661,6 +1741,12 @@ TODO:
  * show the initial quadratic fit of data
 
 
+ ? does the gradient fit not work correctly, or are you getting the coefficients incorrectly?
+
+
+
+ ! the problem with gradient descent may be from using unsigned numbers and it causing wrap around to large numbers. that was happening with reporting.
+  * frankly, that might be happening with guesses too.
 
 * clean up non monitonic fit.
 
