@@ -1364,8 +1364,12 @@ TestResults TestList_Gradient(const std::vector<size_t>& values, size_t searchVa
         // y = x^2/2 * c1 + xc2 + c3
         // 0 = x^2/2 * c1 + xc2 + (c3 - y)
         // x = (-c2 +- sqrt(c2 * c2 - 2 * c1 * (c3 - y))) / c1
-        const float c1 = prime.m;
+        //const float c1 = prime.m;
         const float c2 = prime.b;
+
+        // TODO: make this into an alternate function.
+        // c1 = (y - xc2 - x3)/(x^2 / 2)
+        const float c1 = (values[maxIndex] - float(maxIndex) * c2 - c3) / float(maxIndex*maxIndex / 2.0f);
 
         if (first)
         {
@@ -1516,12 +1520,14 @@ int main(int argc, char** argv)
 {
     MakeListInfo MakeFns[] =
     {
+        /*
         {"Normal", MakeList_Normal},
         {"Random", MakeList_Random},
         {"Linear", MakeList_Linear},
         {"Linear Outlier", MakeList_Linear_Outlier},
         {"Quadratic", MakeList_Quadratic},
         {"Cubic", MakeList_Cubic},
+        */
         {"Log", MakeList_Log},
     };
 
@@ -1736,13 +1742,10 @@ int main(int argc, char** argv)
 
 TODO:
 
+* maybe make a version of the gradient search that preserves ending position instead of ending derivative
 
 * maybe make everything except monotonic fit, then figure that out last.
  * show the initial quadratic fit of data
-
-
- ? does the gradient fit not work correctly, or are you getting the coefficients incorrectly?
-
 
 
  ! the problem with gradient descent may be from using unsigned numbers and it causing wrap around to large numbers. that was happening with reporting.
