@@ -1814,4 +1814,10 @@ NOTES:
 
 ? should we show the last blog post test w/ normal distribution numbers? i think so... maybe as a first item before getting into the new stuff.
 
+
+! the gradient fit doesn't always match the end points!  There are 4 constraints (start/end pos/derivative) and 3 unknowns (A,B,C) so it's overconstrained.
+ * still, how does it do?
+ * it does make a monotonic function though.
+
+
 */
