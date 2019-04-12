@@ -8,9 +8,11 @@
 #include <array>
 #include <assert.h>
 
+// TODO: c_maxNumValues should be 1000, c_numRunsPerTest should be 100
+
 static const size_t c_maxValue = 2000;           // the sorted arrays will have values between 0 and this number in them (inclusive)
-static const size_t c_maxNumValues = 1000;       // the graphs will graph between 1 and this many values in a sorted array
-static const size_t c_numRunsPerTest = 100;      // how many times does it do the same test to gather min, max, average?
+static const size_t c_maxNumValues = 100;       // the graphs will graph between 1 and this many values in a sorted array
+static const size_t c_numRunsPerTest = 10;      // how many times does it do the same test to gather min, max, average?
 static const size_t c_perfTestNumSearches = 100000; // how many searches are going to be done per list type, to come up with timing for a search type.
 
 #define VERIFY_RESULT() 1 // verifies that the search functions got the right answer. prints out a message if they didn't.
@@ -447,32 +449,36 @@ Vec3 CalculateErrorSquaredGradient(const Vec2u data[3], const Vec3& coefficients
     // x is the data point's x axis value
     // y is the data point's y axis value
     //
+    // y is a known constant so you can include it in the C constant to get this:
+    //
+    // Error^2 = (Ax^2+Bx+C)^2
+    //
     // We are calculating / minimizing "Error Squared" so that we treat negative
     // and positive error the same, and try to reach zero error.
     //
-    // dError^2 / dC = 2Ax^2 + 2Bx   + 2C    - 2y
-    // dError^2 / dB = 2Ax^3 + 2Bx^2 + 2Cx   - 2xy
-    // dError^2 / dA = 2Ax^4 + 2Bx^3 + 2Cx^2 - 2x^2y
+    // dError^2 / dC = 2Ax^2 + 2Bx   + 2C
+    // dError^2 / dB = 2Ax^3 + 2Bx^2 + 2Cx
+    // dError^2 / dA = 2Ax^4 + 2Bx^3 + 2Cx^2
     //
     // Observation: start with dEerror^2 / dC
     //              multiply by x to get dEerror^2 / dB
     //              multiply by x to get dEerror^2 / dA
+    //
 
     // how much the error squared for a single point changes as C changes
     auto dErrorSquared_dC_SinglePoint = [](const Vec3& coefficients, const Vec2u& point) -> double
     {
-        double A = coefficients[0];
-        double B = coefficients[1];
-        double C = coefficients[2];
-
         double x = double(point[0]);
         double y = double(point[1]);
 
-        // 2Ax^2 + 2Bx + 2C - 2y
+        double A = coefficients[0];
+        double B = coefficients[1];
+        double C = coefficients[2] - y;
+
+        // 2Ax^2 + 2Bx + 2C
         return 2.0*A*x*x +
                2.0*B*x +
-               2.0*C -
-               2.0*y;
+               2.0*C;
     };
 
     // calculate the combined error squared gradient for all three points
@@ -516,6 +522,9 @@ Vec3 CalculateErrorSquaredGradient(const Vec2u data[3], const Vec3& coefficients
 
 void MakeQuadraticMonotonic_ProjectiveGradientDescent_ProjectValid(const Vec2u data[3], Vec3& coefficients)
 {
+    float deriveMin = 2.0f * coefficients[0] * float(data[0][0]) + coefficients[1];
+    float deriveMax = 2.0f * coefficients[0] * float(data[2][0]) + coefficients[1];
+
     // This function makes sure that the derivatives of the quadratic curve is non negative over the range the data is defined in
     //
     // f(x) = Ax^2 + Bx + C
@@ -613,16 +622,29 @@ void MakeQuadraticMonotonic_ProjectiveGradientDescent(const Vec2u data[3], Vec3&
 
     Validate(coefficients);
 
+    float val0 = EvaluateQuadratic(coefficients, float(data[0][0]));
+    float val1 = EvaluateQuadratic(coefficients, float(data[1][0]));
+    float val2 = EvaluateQuadratic(coefficients, float(data[2][0]));
+
     MakeQuadraticMonotonic_ProjectiveGradientDescent_ProjectValid(data, coefficients);
 
     Validate(coefficients);
 
+    // TODO: once you fix the growing error problem, maybe keep the lowest error found.
+
+    // TODO: remove when things are sorted
+    float startingMSE = CalculateMeanSquaredError(data, coefficients);
+    Validate(startingMSE);
+
     printf("Starting Error = %f\n", CalculateMeanSquaredError(data, coefficients));
+    printf("data = (%zu,%zu), (%zu,%zu), (%zu,%zu)\n", data[0][0], data[0][1], data[1][0], data[1][1], data[2][0], data[2][1]);
+    printf("coefficients = (%f, %f, %f)\n", coefficients[0], coefficients[1], coefficients[2]);
 
     for (int i = 0; i < c_numIterations; ++i)
     {
         // TODO: remove when done
         float MSEBefore = CalculateMeanSquaredError(data, coefficients);
+        Validate(MSEBefore);
 
         Vec3 errorGradient = CalculateErrorSquaredGradient(data, coefficients);
         coefficients[0] -= errorGradient[0] * c_stepSize;
@@ -630,6 +652,7 @@ void MakeQuadraticMonotonic_ProjectiveGradientDescent(const Vec2u data[3], Vec3&
         coefficients[2] -= errorGradient[2] * c_stepSize;
 
         float MSEAfter = CalculateMeanSquaredError(data, coefficients);
+        Validate(MSEAfter);
 
         if (MSEAfter > MSEBefore * 2 && MSEBefore > 1.0f)
             int ijkl = 0;
@@ -640,8 +663,8 @@ void MakeQuadraticMonotonic_ProjectiveGradientDescent(const Vec2u data[3], Vec3&
 
         Validate(coefficients);
 
-        //float gradientLength = sqrtf(errorGradient[0] * errorGradient[0] + errorGradient[1] * errorGradient[1] + errorGradient[2] * errorGradient[2]);
-        //printf("[%i] Error = %f (grad length = %f)\n", i, CalculateMeanSquaredError(data, coefficients), gradientLength);
+        float gradientLength = sqrtf(errorGradient[0] * errorGradient[0] + errorGradient[1] * errorGradient[1] + errorGradient[2] * errorGradient[2]);
+        printf("[%i] Error = %f (grad length = %f)\n", i, CalculateMeanSquaredError(data, coefficients), gradientLength);
     }
 
     printf("Ending Error = %f\n", CalculateMeanSquaredError(data, coefficients));
@@ -748,6 +771,11 @@ TestResults TestList_QuadraticFit(const std::vector<size_t>& values, size_t sear
         ret.index = 0;
         ret.found = false;
         return ret;
+    }
+
+    if (values.size() == 6)
+    {
+        int ijkl = 0;
     }
 
     Vec3 coefficiants;
@@ -1533,15 +1561,18 @@ int main(int argc, char** argv)
 
     TestListInfo TestFns[] =
     {
+        /*
         {"Linear Search", TestList_LinearSearch, nullptr},
         {"Line Fit", TestList_LineFit, nullptr},
 
         {"Binary Search", TestList_BinarySearch, nullptr},
         {"Line Fit Hybrid", TestList_LineFitHybridSearch, nullptr},
-
-        //{"Quadratic Fit", TestList_QuadraticFit},
+        */
+        {"Quadratic Fit", TestList_QuadraticFit, nullptr}, // TODO: initial fit
+        /*
         {"Quadratic Fit (Non Monotonic)", TestList_QuadraticFitNonMonotonic, InitialFit_QuadraticFitNonMonotonic},
         {"Gradient", TestList_Gradient, InitialFit_Gradient},
+        */
 
         // TODO: Quadratic Hybrid Fit? if necessary...
     };
