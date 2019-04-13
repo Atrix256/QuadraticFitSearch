@@ -17,6 +17,7 @@ static const size_t c_perfTestNumSearches = 100000; // how many searches are goi
 
 #define VERIFY_RESULT() 1 // verifies that the search functions got the right answer. prints out a message if they didn't.
 #define MAKE_CSVS() 1 // the main test
+#define DO_PERF_TESTS() 0
 
 struct TestResults
 {
@@ -435,6 +436,22 @@ float CalculateMeanSquaredError(const Vec2u data[3], const Vec3& coefficients)
     return mse;
 }
 
+// TODO: only for debugging
+Vec3 CalculateErrorSquaredGradientNumeric(const Vec2u data[3], const Vec3& coefficients)
+{
+    Vec3 errorGradient = { 0.0f, 0.0f, 0.0f };
+    static const float c_epsilon = 0.001f;
+    for (int i = 0; i < 3; ++i)
+    {
+        Vec3 c1 = coefficients;
+        Vec3 c2 = coefficients;
+        c1[i] -= c_epsilon;
+        c2[i] += c_epsilon;
+        errorGradient[i] = (CalculateMeanSquaredError(data, c2) - CalculateMeanSquaredError(data, c1)) / (c_epsilon * 2.0f);
+    }
+    return errorGradient;
+}
+
 Vec3 CalculateErrorSquaredGradient(const Vec2u data[3], const Vec3& coefficients)
 {
 #if 1  // Calculate error squared gradient analytically
@@ -522,6 +539,9 @@ Vec3 CalculateErrorSquaredGradient(const Vec2u data[3], const Vec3& coefficients
 
 void MakeQuadraticMonotonic_ProjectiveGradientDescent_ProjectValid(const Vec2u data[3], Vec3& coefficients)
 {
+    // TODO: maybe this is the problem?
+    return;
+
     float deriveMin = 2.0f * coefficients[0] * float(data[0][0]) + coefficients[1];
     float deriveMax = 2.0f * coefficients[0] * float(data[2][0]) + coefficients[1];
 
@@ -636,9 +656,16 @@ void MakeQuadraticMonotonic_ProjectiveGradientDescent(const Vec2u data[3], Vec3&
     float startingMSE = CalculateMeanSquaredError(data, coefficients);
     Validate(startingMSE);
 
-    printf("Starting Error = %f\n", CalculateMeanSquaredError(data, coefficients));
-    printf("data = (%zu,%zu), (%zu,%zu), (%zu,%zu)\n", data[0][0], data[0][1], data[1][0], data[1][1], data[2][0], data[2][1]);
-    printf("coefficients = (%f, %f, %f)\n", coefficients[0], coefficients[1], coefficients[2]);
+    //printf("\n\n--------------------\nStarting Error = %f\n", CalculateMeanSquaredError(data, coefficients));
+    //printf("data = (%zu,%zu), (%zu,%zu), (%zu,%zu)\n", data[0][0], data[0][1], data[1][0], data[1][1], data[2][0], data[2][1]);
+    //printf("coefficients = (%f, %f, %f)\n", coefficients[0], coefficients[1], coefficients[2]);
+
+    // TODO: momentum! https://distill.pub/2017/momentum/
+
+    static const float c_momentumAlpha = 0.001f;
+    static const float c_momentumBeta = 0.99f;
+
+    Vec3 errorGradientWithMomentum = Vec3{ 0.0f, 0.0f, 0.0f };
 
     for (int i = 0; i < c_numIterations; ++i)
     {
@@ -646,10 +673,58 @@ void MakeQuadraticMonotonic_ProjectiveGradientDescent(const Vec2u data[3], Vec3&
         float MSEBefore = CalculateMeanSquaredError(data, coefficients);
         Validate(MSEBefore);
 
+        Vec3 oldCoefficients = coefficients;
+        static bool doThis = false;
+        if (doThis)
+        {
+            coefficients = oldCoefficients;
+        }
+
         Vec3 errorGradient = CalculateErrorSquaredGradient(data, coefficients);
-        coefficients[0] -= errorGradient[0] * c_stepSize;
-        coefficients[1] -= errorGradient[1] * c_stepSize;
-        coefficients[2] -= errorGradient[2] * c_stepSize;
+        Vec3 errorGradientNumeric = CalculateErrorSquaredGradientNumeric(data, coefficients);
+
+        // momentum
+        for (int i = 0; i < 3; ++i)
+            errorGradientWithMomentum[i] = c_momentumBeta * errorGradientWithMomentum[i] + errorGradient[i];
+
+        const float c_lineBackTrackC = 0.5f;
+        const float c_lineBackTrackTau = 0.5f;
+
+        // line backtracking
+        // TODO: can factor some stuff out of the loop when it's working
+        Vec3 proposedCoefficients;
+        float t = 1.0f;
+        while (1)
+        {           
+            for (int i = 0; i < 3; ++i)
+                proposedCoefficients[i] = coefficients[i] - c_momentumAlpha * t * errorGradientWithMomentum[i];
+
+            float errorStepped = CalculateMeanSquaredError(data, proposedCoefficients);
+            float errorCurrent = CalculateMeanSquaredError(data, coefficients);
+
+
+            float errorGrad_dot_errorGrad = 0.0f;
+            for (int i = 0; i < 3; ++i)
+                errorGrad_dot_errorGrad += errorGradient[i] * errorGradient[i];
+
+            float rhs = (c_momentumAlpha * t) * c_lineBackTrackC * errorGrad_dot_errorGrad;
+
+            if (errorStepped <= errorCurrent - rhs)
+                break;
+
+            t = t * c_lineBackTrackTau;
+        }
+
+        // TODO: use proposed coefficients to descend!
+        coefficients = proposedCoefficients;
+
+        // descend
+        //for (int i = 0; i < 3; ++i)
+            //coefficients[i] -= c_momentumAlpha * t * errorGradientWithMomentum[i];
+
+        //coefficients[0] -= errorGradient[0] * c_stepSize;
+        //coefficients[1] -= errorGradient[1] * c_stepSize;
+        //coefficients[2] -= errorGradient[2] * c_stepSize;
 
         float MSEAfter = CalculateMeanSquaredError(data, coefficients);
         Validate(MSEAfter);
@@ -664,10 +739,16 @@ void MakeQuadraticMonotonic_ProjectiveGradientDescent(const Vec2u data[3], Vec3&
         Validate(coefficients);
 
         float gradientLength = sqrtf(errorGradient[0] * errorGradient[0] + errorGradient[1] * errorGradient[1] + errorGradient[2] * errorGradient[2]);
-        printf("[%i] Error = %f (grad length = %f)\n", i, CalculateMeanSquaredError(data, coefficients), gradientLength);
+        float gradientWithMomentumLength = sqrtf(errorGradientWithMomentum[0] * errorGradientWithMomentum[0] + errorGradientWithMomentum[1] * errorGradientWithMomentum[1] + errorGradientWithMomentum[2] * errorGradientWithMomentum[2]);
+
+        //printf("\n[%i] Error = %f (grad length = %f / %f)\n", i, CalculateMeanSquaredError(data, coefficients), gradientLength, gradientWithMomentumLength);
+        //printf("Grad = %f, %f, %f\n", errorGradient[0], errorGradient[1], errorGradient[2]);
+        //printf("GradNum = %f, %f, %f\n", errorGradientNumeric[0], errorGradientNumeric[1], errorGradientNumeric[2]);
+        //printf("Grad M = %f, %f, %f\n", errorGradientWithMomentum[0], errorGradientWithMomentum[1], errorGradientWithMomentum[2]);
+        //printf("coeff = %f, %f, %f\n", coefficients[0], coefficients[1], coefficients[2]);
     }
 
-    printf("Ending Error = %f\n", CalculateMeanSquaredError(data, coefficients));
+    //printf("Ending Error = %f\n", CalculateMeanSquaredError(data, coefficients));
 }
 
 void QuadraticFit(const Vec2u data[3], Vec3& coefficients)
@@ -773,7 +854,7 @@ TestResults TestList_QuadraticFit(const std::vector<size_t>& values, size_t sear
         return ret;
     }
 
-    if (values.size() == 6)
+    if (values.size() == 10)
     {
         int ijkl = 0;
     }
@@ -1548,31 +1629,25 @@ int main(int argc, char** argv)
 {
     MakeListInfo MakeFns[] =
     {
-        /*
         {"Normal", MakeList_Normal},
         {"Random", MakeList_Random},
         {"Linear", MakeList_Linear},
         {"Linear Outlier", MakeList_Linear_Outlier},
         {"Quadratic", MakeList_Quadratic},
         {"Cubic", MakeList_Cubic},
-        */
         {"Log", MakeList_Log},
     };
 
     TestListInfo TestFns[] =
     {
-        /*
         {"Linear Search", TestList_LinearSearch, nullptr},
         {"Line Fit", TestList_LineFit, nullptr},
 
         {"Binary Search", TestList_BinarySearch, nullptr},
         {"Line Fit Hybrid", TestList_LineFitHybridSearch, nullptr},
-        */
         {"Quadratic Fit", TestList_QuadraticFit, nullptr}, // TODO: initial fit
-        /*
         {"Quadratic Fit (Non Monotonic)", TestList_QuadraticFitNonMonotonic, InitialFit_QuadraticFitNonMonotonic},
         {"Gradient", TestList_Gradient, InitialFit_Gradient},
-        */
 
         // TODO: Quadratic Hybrid Fit? if necessary...
     };
@@ -1712,6 +1787,7 @@ int main(int argc, char** argv)
 
 #endif // MAKE_CSVS()
 
+#if DO_PERF_TESTS()
     // Do perf tests
     {
         static std::random_device rd("dev/random");
@@ -1763,6 +1839,7 @@ int main(int argc, char** argv)
             printf("%s total : %f seconds  (%zu guesses = %f nanoseconds per guess)\n\n", TestFns[testIndex].name, timeTotal, totalGuesses, timePerGuess);
         }
     }
+#endif // DO_PERF_TESTS()
 
     system("pause");
 
@@ -1772,6 +1849,22 @@ int main(int argc, char** argv)
 /*
 
 TODO:
+
+* your test for exiting line search loop seems like it's not quite right. look into it!
+
+* tune line backtracking constants
+* make sure everything goes through without going infinite
+* add early stopping, and take best thing found instead of last thing found
+* probably should have a max iteration count on that line search or a threshold for t?
+
+* need to do initial fit for quadratic it
+* need to verify quadratic search function works. Maybe make one function that is templated by the type of fit it does?
+
+* line backtracking works by searching along the gradient up to step size, to find the best improvement it can.
+ * (hybrid) line fit search may be good here?! maybe not though.
+
+* make sure and implement line backtracking, even if it works without it!
+* keep the coefficients with the lowest error, not just the final ones!
 
 * maybe make a version of the gradient search that preserves ending position instead of ending derivative
 
@@ -1848,6 +1941,9 @@ NOTES:
 
 ? should we show the last blog post test w/ normal distribution numbers? i think so... maybe as a first item before getting into the new stuff.
 
+
+! lots of cool links here about gradient descent. extract them? also link twitter conversation?
+* https://twitter.com/Atrix256/status/1116551349330513920
 
 ! the gradient fit doesn't always match the end points!  There are 4 constraints (start/end pos/derivative) and 3 unknowns (A,B,C) so it's overconstrained.
  * still, how does it do?
